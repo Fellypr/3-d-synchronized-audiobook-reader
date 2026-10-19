@@ -4,18 +4,48 @@ import { auth } from '@/lib/auth'
 import { serveAudiobookFile } from '@/lib/storage'
 
 export async function GET(request: Request) {
-  const session = await auth.api.getSession({ headers: await headers() })
-  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
+  const reqHeaders = await headers()
+  const session = await auth.api.getSession({ headers: reqHeaders })
   const pathname = new URL(request.url).searchParams.get('pathname')
-  if (!pathname || !pathname.startsWith(`audiobooks/${session.user.id}/`)) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  console.log('[api/books/file] Request received:', {
+    url: request.url,
+    pathname,
+    sessionUser: session?.user ? { id: session.user.id, name: session.user.name } : null,
+  })
+
+  if (!session?.user) {
+    console.warn('[api/books/file] Unauthorized access: no active session')
+    return NextResponse.json({ error: 'Unauthorized', details: 'Sessão não encontrada ou expirada.' }, { status: 401 })
+  }
+
+  if (!pathname) {
+    console.warn('[api/books/file] Missing pathname parameter')
+    return NextResponse.json({ error: 'Not found', details: 'Parâmetro pathname ausente.' }, { status: 404 })
+  }
+
+  const expectedPrefix = `audiobooks/${session.user.id}/`
+  if (!pathname.startsWith(expectedPrefix)) {
+    console.warn('[api/books/file] Pathname mismatch with session user ID:', {
+      expectedPrefix,
+      receivedPathname: pathname,
+      sessionUserId: session.user.id,
+    })
+    return NextResponse.json({
+      error: 'Not found',
+      details: `O arquivo solicitado pertence a outro usuário ou prefixo inválido. (Esperado: ${expectedPrefix})`,
+      pathname,
+      userId: session.user.id,
+    }, { status: 404 })
   }
 
   try {
     return await serveAudiobookFile(pathname, request)
   } catch (error) {
-    console.error('[v0] Book file delivery failed:', error)
-    return NextResponse.json({ error: 'File delivery failed' }, { status: 500 })
+    console.error('[api/books/file] Error serving file:', error)
+    return NextResponse.json({
+      error: 'File delivery failed',
+      details: error instanceof Error ? error.message : String(error),
+    }, { status: 500 })
   }
 }

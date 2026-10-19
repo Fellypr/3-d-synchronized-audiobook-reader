@@ -12,13 +12,32 @@ export async function saveAudiobookFile(
   extension: 'audio' | 'json',
   file: File
 ): Promise<{ pathname: string }> {
+  console.log('[storage] saveAudiobookFile called:', {
+    pathPrefix,
+    extension,
+    fileName: file.name,
+    fileSize: file.size,
+    hasBlobToken: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+  })
+
   // If Vercel Blob token is provided, use Vercel Blob
   if (process.env.BLOB_READ_WRITE_TOKEN) {
-    const blob = await put(`${pathPrefix}.${extension}`, file, {
-      access: 'private',
-      addRandomSuffix: true,
-    })
-    return { pathname: blob.pathname }
+    try {
+      console.log(`[storage] Uploading to Vercel Blob: ${pathPrefix}.${extension}`)
+      const blob = await put(`${pathPrefix}.${extension}`, file, {
+        access: 'private',
+        addRandomSuffix: true,
+      })
+      console.log('[storage] Vercel Blob upload success:', { pathname: blob.pathname, url: blob.url })
+      return { pathname: blob.pathname }
+    } catch (uploadError) {
+      console.error('[storage] Vercel Blob upload failed:', uploadError)
+      throw uploadError
+    }
+  }
+
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+    throw new Error('BLOB_READ_WRITE_TOKEN não está configurado na Vercel. Configure o Vercel Blob para permitir uploads em produção.')
   }
 
   // Local filesystem fallback when developing locally without Vercel credentials
@@ -47,9 +66,21 @@ export async function saveAudiobookFile(
 
 export async function serveAudiobookFile(pathname: string, request: Request): Promise<Response> {
   const localPath = path.resolve(STORAGE_DIR, pathname)
+  const localExists = localPath.startsWith(path.resolve(STORAGE_DIR)) && fs.existsSync(localPath)
+  const hasBlobToken = Boolean(process.env.BLOB_READ_WRITE_TOKEN)
+
+  console.log('[storage] serveAudiobookFile called:', {
+    pathname,
+    localExists,
+    hasBlobToken,
+    blobTokenPrefix: process.env.BLOB_READ_WRITE_TOKEN
+      ? `${process.env.BLOB_READ_WRITE_TOKEN.slice(0, 15)}...`
+      : 'NONE',
+  })
 
   // Check if file exists locally first
-  if (localPath.startsWith(path.resolve(STORAGE_DIR)) && fs.existsSync(localPath)) {
+  if (localExists) {
+    console.log('[storage] Serving file from local disk:', localPath)
     const stat = await fsPromises.stat(localPath)
     const fileSize = stat.size
 
@@ -108,19 +139,93 @@ export async function serveAudiobookFile(pathname: string, request: Request): Pr
   }
 
   // Fallback to Vercel Blob if credentials are provided
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
-    const result = await get(pathname, { access: 'private' })
-    if (!result) return new Response('Not found', { status: 404 })
+  if (hasBlobToken) {
+    console.log('[storage] Querying Vercel Blob for pathname:', pathname)
+    try {
+      const range = request.headers.get('range')
+      const ifNoneMatch = request.headers.get('if-none-match') || undefined
 
-    return new Response(result.stream, {
-      headers: {
-        'Content-Type': result.blob.contentType ?? 'application/octet-stream',
+      const result = await get(pathname, {
+        access: 'private',
+        ifNoneMatch,
+        headers: range ? { range } : undefined,
+      })
+
+      if (!result) {
+        console.warn('[storage] Vercel Blob: get returned null (blob not found) for:', pathname)
+        return new Response(JSON.stringify({
+          error: 'Not found in Vercel Blob',
+          pathname,
+          hint: 'O arquivo não foi encontrado no Vercel Blob. Pode ser necessário sincronizar ou reenviar o livro.',
+        }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      console.log('[storage] Vercel Blob: file found successfully:', {
+        pathname,
+        contentType: result.blob.contentType,
+        size: result.blob.size,
+      })
+
+      if (result.statusCode === 304) {
+        return new Response(null, {
+          status: 304,
+          headers: {
+            ETag: result.blob.etag,
+            'Cache-Control': 'private, no-cache',
+          },
+        })
+      }
+
+      const headers: Record<string, string> = {
+        'Content-Type': result.blob.contentType ?? (pathname.endsWith('.json') ? 'application/json' : 'audio/mpeg'),
         'Cache-Control': 'private, no-cache',
         ETag: result.blob.etag,
         'Accept-Ranges': 'bytes',
-      },
-    })
+      }
+
+      const contentRange = result.headers.get('content-range')
+      const contentLength = result.headers.get('content-length')
+      if (contentRange) headers['Content-Range'] = contentRange
+      if (contentLength) headers['Content-Length'] = contentLength
+
+      const isPartial = Boolean(range && contentRange)
+
+      return new Response(result.stream, {
+        status: isPartial ? 206 : 200,
+        headers,
+      })
+    } catch (blobError) {
+      console.error('[storage] Vercel Blob get error:', blobError)
+      return new Response(JSON.stringify({
+        error: 'Vercel Blob query failed',
+        details: blobError instanceof Error ? blobError.message : String(blobError),
+        pathname,
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
   }
 
-  return new Response('Not found', { status: 404 })
+  console.warn('[storage] File not found and no Vercel Blob token configured:', {
+    pathname,
+    localExists,
+    hasBlobToken,
+  })
+
+  return new Response(JSON.stringify({
+    error: 'Not found',
+    pathname,
+    localExists,
+    hasBlobToken,
+    message: hasBlobToken
+      ? 'Arquivo não encontrado no disco local nem no Vercel Blob.'
+      : 'BLOB_READ_WRITE_TOKEN não está definido nas variáveis de ambiente da Vercel e o arquivo não existe localmente.',
+  }), {
+    status: 404,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
