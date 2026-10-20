@@ -59,13 +59,29 @@ async function main() {
     }
 
     const fileBuffer = await fsPromises.readFile(fullPath)
-    const blob = await put(relPath, fileBuffer, {
-      access: 'private',
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      contentType,
-      token,
-    })
+    let blob
+    try {
+      blob = await put(relPath, fileBuffer, {
+        access: 'public',
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        contentType,
+        token,
+      })
+    } catch (putErr) {
+      const msg = putErr?.message || String(putErr)
+      if (msg.includes('private') || msg.includes('access mode')) {
+        blob = await put(relPath, fileBuffer, {
+          access: 'private',
+          addRandomSuffix: false,
+          allowOverwrite: true,
+          contentType,
+          token,
+        })
+      } else {
+        throw putErr
+      }
+    }
 
     console.log(`✅ Sucesso! Pathname: ${blob.pathname}`)
   }

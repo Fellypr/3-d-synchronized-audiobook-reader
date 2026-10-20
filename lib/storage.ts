@@ -24,10 +24,23 @@ export async function saveAudiobookFile(
   if (process.env.BLOB_READ_WRITE_TOKEN) {
     try {
       console.log(`[storage] Uploading to Vercel Blob: ${pathPrefix}.${extension}`)
-      const blob = await put(`${pathPrefix}.${extension}`, file, {
-        access: 'private',
-        addRandomSuffix: true,
-      })
+      let blob
+      try {
+        blob = await put(`${pathPrefix}.${extension}`, file, {
+          access: 'public',
+          addRandomSuffix: true,
+        })
+      } catch (pubErr: any) {
+        const msg = pubErr?.message || String(pubErr)
+        if (msg.includes('private') || msg.includes('access mode') || pubErr?.name === 'BlobAccessError') {
+          blob = await put(`${pathPrefix}.${extension}`, file, {
+            access: 'private',
+            addRandomSuffix: true,
+          })
+        } else {
+          throw pubErr
+        }
+      }
       console.log('[storage] Vercel Blob upload success:', { pathname: blob.pathname, url: blob.url })
       return { pathname: blob.pathname }
     } catch (uploadError) {
@@ -145,11 +158,25 @@ export async function serveAudiobookFile(pathname: string, request: Request): Pr
       const range = request.headers.get('range')
       const ifNoneMatch = request.headers.get('if-none-match') || undefined
 
-      const result = await get(pathname, {
-        access: 'private',
-        ifNoneMatch,
-        headers: range ? { range } : undefined,
-      })
+      let result: any = null
+      try {
+        result = await get(pathname, {
+          access: 'public',
+          ifNoneMatch,
+          headers: range ? { range } : undefined,
+        })
+      } catch (pubErr: any) {
+        const msg = pubErr?.message || String(pubErr)
+        if (msg.includes('private') || msg.includes('access mode') || pubErr?.name === 'BlobAccessError') {
+          result = await get(pathname, {
+            access: 'private',
+            ifNoneMatch,
+            headers: range ? { range } : undefined,
+          })
+        } else {
+          throw pubErr
+        }
+      }
 
       if (!result) {
         console.warn('[storage] Vercel Blob: get returned null (blob not found) for:', pathname)

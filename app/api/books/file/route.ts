@@ -1,6 +1,9 @@
 import { headers } from 'next/headers'
 import { NextResponse } from 'next/server'
+import { and, eq, or } from 'drizzle-orm'
 import { auth } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { book } from '@/lib/db/schema'
 import { serveAudiobookFile } from '@/lib/storage'
 
 export async function GET(request: Request) {
@@ -25,18 +28,31 @@ export async function GET(request: Request) {
   }
 
   const expectedPrefix = `audiobooks/${session.user.id}/`
-  if (!pathname.startsWith(expectedPrefix)) {
-    console.warn('[api/books/file] Pathname mismatch with session user ID:', {
-      expectedPrefix,
-      receivedPathname: pathname,
-      sessionUserId: session.user.id,
-    })
-    return NextResponse.json({
-      error: 'Not found',
-      details: `O arquivo solicitado pertence a outro usuário ou prefixo inválido. (Esperado: ${expectedPrefix})`,
-      pathname,
-      userId: session.user.id,
-    }, { status: 404 })
+  const startsWithUser = pathname.startsWith(expectedPrefix)
+
+  if (!startsWithUser) {
+    // Check if user owns a book referencing this pathname in DB
+    const [userBook] = await db.select({ id: book.id })
+      .from(book)
+      .where(and(
+        eq(book.userId, session.user.id),
+        or(eq(book.audioUrl, pathname), eq(book.jsonUrl, pathname))
+      ))
+      .limit(1)
+
+    if (!userBook) {
+      console.warn('[api/books/file] Pathname mismatch with session user ID and not found in DB:', {
+        expectedPrefix,
+        receivedPathname: pathname,
+        sessionUserId: session.user.id,
+      })
+      return NextResponse.json({
+        error: 'Not found',
+        details: `O arquivo solicitado não pertence a nenhum livro do usuário autenticado.`,
+        pathname,
+        userId: session.user.id,
+      }, { status: 404 })
+    }
   }
 
   try {

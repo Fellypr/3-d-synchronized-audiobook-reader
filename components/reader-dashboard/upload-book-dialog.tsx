@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { Dialog } from '@base-ui/react/dialog'
 import { FileAudio2, FileJson2, Upload, X, Loader2 } from 'lucide-react'
 import { upload } from '@vercel/blob/client'
+import { useSession } from '@/lib/auth-client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -15,7 +16,28 @@ type UploadBookDialogProps = {
 
 type ExistingBook = { id: string; name: string }
 
+async function uploadToBlob(pathname: string, file: File) {
+  try {
+    return await upload(pathname, file, {
+      access: 'public',
+      handleUploadUrl: '/api/books/upload',
+      multipart: file.size > 4.5 * 1024 * 1024,
+    })
+  } catch (err: any) {
+    const msg = err?.message || String(err)
+    if (msg.includes('private') || msg.includes('access mode') || msg.includes('BlobAccessError')) {
+      return await upload(pathname, file, {
+        access: 'private',
+        handleUploadUrl: '/api/books/upload',
+        multipart: file.size > 4.5 * 1024 * 1024,
+      })
+    }
+    throw err
+  }
+}
+
 export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDialogProps) {
+  const { data: session } = useSession()
   const audioInputRef = useRef<HTMLInputElement>(null)
   const jsonInputRef = useRef<HTMLInputElement>(null)
   const [audio, setAudio] = useState<File | null>(null)
@@ -80,31 +102,29 @@ export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDial
     try {
       const sanitizedName = name.replace(/[^a-z0-9_-]+/gi, '_')
       const audioExt = audio.name.split('.').pop()?.toLowerCase() || 'audio'
+      const userFolder = session?.user?.id ? `audiobooks/${session.user.id}` : 'audiobooks'
+      const audioPathname = `${userFolder}/${sanitizedName}.${audioExt}`
+      const jsonPathname = `${userFolder}/${sanitizedName}.json`
 
       // 1. Try Direct Client Upload to Vercel Blob (bypasses Vercel 4.5 MB serverless limit)
       let usedDirectUpload = false
       let directAudioPathname = ''
       let directJsonPathname = ''
+      let directError: Error | null = null
 
       try {
         setUploadStatus('Enviando arquivos diretamente para o Vercel Blob...')
         const [audioBlob, jsonBlob] = await Promise.all([
-          upload(`audiobooks/${sanitizedName}.${audioExt}`, audio, {
-            access: 'private',
-            handleUploadUrl: '/api/books/upload',
-            multipart: audio.size > 4.5 * 1024 * 1024,
-          }),
-          upload(`audiobooks/${sanitizedName}.json`, wordMap, {
-            access: 'private',
-            handleUploadUrl: '/api/books/upload',
-          }),
+          uploadToBlob(audioPathname, audio),
+          uploadToBlob(jsonPathname, wordMap),
         ])
 
         directAudioPathname = audioBlob.pathname
         directJsonPathname = jsonBlob.pathname
         usedDirectUpload = true
       } catch (directErr) {
-        console.warn('[upload] Direct client upload unavailable or failed, falling back to server upload:', directErr)
+        directError = directErr instanceof Error ? directErr : new Error(String(directErr))
+        console.warn('[upload] Direct client upload failed:', directErr)
       }
 
       if (usedDirectUpload) {
@@ -136,6 +156,13 @@ export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDial
         }
 
         resetAndClose()
+        return
+      }
+
+      // If file is larger than 4.5 MB, server fallback is impossible on Vercel
+      if (audio.size > 4.5 * 1024 * 1024) {
+        const detail = directError?.message || 'Falha ao conectar com o Vercel Blob.'
+        setError(`Não foi possível enviar o áudio (${(audio.size / (1024 * 1024)).toFixed(1)} MB): ${detail}`)
         return
       }
 

@@ -4,7 +4,8 @@ import * as dotenv from 'dotenv'
 dotenv.config({ path: '.env.local' })
 
 async function migrate() {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+  const connectionString = (process.env.DATABASE_URL || '').replace(/sslmode=(?:require|prefer|verify-ca)\b/g, 'sslmode=verify-full')
+  const pool = new Pool({ connectionString })
   try {
     console.log('Aplicando migrações no banco Neon...')
 

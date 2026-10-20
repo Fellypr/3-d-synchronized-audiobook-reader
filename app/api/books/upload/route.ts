@@ -9,6 +9,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'Não autorizado. Faça login novamente.' }, { status: 401 })
   }
 
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    console.error('[upload] BLOB_READ_WRITE_TOKEN não configurado')
+    return NextResponse.json(
+      {
+        error:
+          'O Vercel Blob não está configurado neste ambiente (BLOB_READ_WRITE_TOKEN ausente). Acesse o painel da Vercel (Project > Storage > Blob) para criar o repositório e vincular ao projeto.',
+      },
+      { status: 500 },
+    )
+  }
+
   let body: HandleUploadBody
   try {
     body = (await request.json()) as HandleUploadBody
@@ -21,9 +32,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       body,
       request,
       onBeforeGenerateToken: async (pathname) => {
-        // Enforce user folder prefix
         return {
           addRandomSuffix: true,
+          maximumSizeInBytes: 500 * 1024 * 1024, // 500 MB
           tokenPayload: JSON.stringify({ userId: session.user.id }),
         }
       },
