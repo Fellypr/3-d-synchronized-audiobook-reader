@@ -1,4 +1,4 @@
-import { put, get } from '@vercel/blob'
+import { put, get, del } from '@vercel/blob'
 import fs from 'node:fs'
 import fsPromises from 'node:fs/promises'
 import path from 'node:path'
@@ -229,3 +229,37 @@ export async function serveAudiobookFile(pathname: string, request: Request): Pr
     headers: { 'Content-Type': 'application/json' },
   })
 }
+
+export async function deleteAudiobookFiles(audioUrl?: string | null, jsonUrl?: string | null): Promise<void> {
+  const paths = [audioUrl, jsonUrl].filter(Boolean) as string[]
+  if (paths.length === 0) return
+
+  // 1. Delete from local filesystem if exists
+  for (const pathname of paths) {
+    try {
+      const localPath = path.resolve(STORAGE_DIR, pathname)
+      if (localPath.startsWith(path.resolve(STORAGE_DIR)) && fs.existsSync(localPath)) {
+        await fsPromises.unlink(localPath)
+        const metaPath = `${localPath}.meta`
+        if (fs.existsSync(metaPath)) {
+          await fsPromises.unlink(metaPath).catch(() => {})
+        }
+        console.log('[storage] Deleted local file:', localPath)
+      }
+    } catch (err) {
+      console.warn('[storage] Failed to delete local file:', pathname, err)
+    }
+  }
+
+  // 2. Delete from Vercel Blob if token is available
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    try {
+      console.log('[storage] Deleting files from Vercel Blob:', paths)
+      await del(paths)
+      console.log('[storage] Vercel Blob deletion succeeded for:', paths)
+    } catch (err) {
+      console.warn('[storage] Failed to delete from Vercel Blob:', paths, err)
+    }
+  }
+}
+

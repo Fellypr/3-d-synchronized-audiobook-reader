@@ -56,6 +56,11 @@ export function ReaderDashboard({ userName, books, progress }: { userName?: stri
     router.refresh()
   }
 
+  function handleBookDeleted(id: string, name: string) {
+    setUploadMessage(`Livro “${name}” excluído com sucesso.`)
+    router.refresh()
+  }
+
   return (
     <main className="min-h-screen bg-library-page text-library-ink">
       <header className="border-b border-library-border/80">
@@ -111,6 +116,7 @@ export function ReaderDashboard({ userName, books, progress }: { userName?: stri
                   book={item}
                   isLastRead={item.id === lastReadId}
                   view={view}
+                  onDeleted={handleBookDeleted}
                 />
               ))}
             </ul>

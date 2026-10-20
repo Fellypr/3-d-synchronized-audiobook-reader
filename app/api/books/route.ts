@@ -1,12 +1,12 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, or } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
 import { headers } from 'next/headers'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { book } from '@/lib/db/schema'
+import { book, audiobookProgress } from '@/lib/db/schema'
 import { isValidWordMap } from '@/lib/books/word-map'
-import { saveAudiobookFile } from '@/lib/storage'
+import { saveAudiobookFile, deleteAudiobookFiles } from '@/lib/storage'
 
 async function getSession() {
   return auth.api.getSession({ headers: await headers() })
@@ -137,3 +137,56 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Não foi possível adicionar o livro agora.' }, { status: 500 })
   }
 }
+
+export async function DELETE(request: Request) {
+  const session = await getSession()
+  if (!session?.user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
+
+  const url = new URL(request.url)
+  let bookId = url.searchParams.get('id')
+  if (!bookId) {
+    try {
+      const body = await request.json()
+      bookId = body.id || body.bookId
+    } catch {}
+  }
+
+  if (!bookId) {
+    return NextResponse.json({ error: 'ID do livro não informado.' }, { status: 400 })
+  }
+
+  console.log('[api/books] DELETE request for bookId:', bookId, 'by userId:', session.user.id)
+
+  const [existing] = await db.select().from(book).where(
+    and(eq(book.id, bookId), eq(book.userId, session.user.id)),
+  ).limit(1)
+
+  if (!existing) {
+    return NextResponse.json({ error: 'Livro não encontrado.' }, { status: 404 })
+  }
+
+  try {
+    // 1. Delete associated progress entries for this book
+    await db.delete(audiobookProgress).where(
+      and(
+        eq(audiobookProgress.userId, session.user.id),
+        or(eq(audiobookProgress.bookId, bookId), eq(audiobookProgress.bookName, existing.name)),
+      ),
+    )
+
+    // 2. Delete the book record from database
+    await db.delete(book).where(
+      and(eq(book.id, bookId), eq(book.userId, session.user.id)),
+    )
+
+    // 3. Delete stored audio and json files (local + blob)
+    await deleteAudiobookFiles(existing.audioUrl, existing.jsonUrl)
+
+    console.log('[api/books] Successfully deleted book:', existing.name, 'id:', bookId)
+    return NextResponse.json({ success: true, id: bookId, name: existing.name })
+  } catch (err) {
+    console.error('[api/books] Failed to delete book:', err)
+    return NextResponse.json({ error: 'Erro ao excluir o livro.' }, { status: 500 })
+  }
+}
+
