@@ -59,6 +59,69 @@ export async function POST(request: Request) {
   const session = await getSession()
   if (!session?.user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
 
+  // Support direct JSON submission when client uploads directly to Vercel Blob
+  if (request.headers.get('content-type')?.includes('application/json')) {
+    let body: { name?: string; audioUrl?: string; jsonUrl?: string; replaceExisting?: boolean }
+    try {
+      body = await request.json()
+    } catch {
+      return NextResponse.json({ error: 'Corpo JSON inválido.' }, { status: 400 })
+    }
+
+    const name = String(body.name || '').trim()
+    const audioUrl = String(body.audioUrl || '').trim()
+    const jsonUrl = String(body.jsonUrl || '').trim()
+    const replaceExisting = Boolean(body.replaceExisting)
+
+    if (!name || !audioUrl || !jsonUrl) {
+      return NextResponse.json({ error: 'Dados incompletos (nome, áudio e mapa JSON são obrigatórios).' }, { status: 400 })
+    }
+
+    const [existing] = await db.select().from(book).where(
+      and(eq(book.userId, session.user.id), eq(book.name, name)),
+    ).limit(1)
+
+    if (existing && !replaceExisting) {
+      return NextResponse.json({
+        code: 'BOOK_EXISTS',
+        error: `Já existe um livro chamado “${existing.name}”.`,
+        book: { id: existing.id, name: existing.name },
+      }, { status: 409 })
+    }
+
+    try {
+      const now = new Date()
+      const [saved] = existing
+        ? await db.update(book)
+          .set({ audioUrl, jsonUrl, durationSeconds: null, updatedAt: now })
+          .where(and(eq(book.id, existing.id), eq(book.userId, session.user.id)))
+          .returning()
+        : await db.insert(book).values({
+          id: randomUUID(),
+          userId: session.user.id,
+          name,
+          audioUrl,
+          jsonUrl,
+          durationSeconds: null,
+          createdAt: now,
+          updatedAt: now,
+        }).returning()
+
+      return NextResponse.json({
+        book: {
+          ...saved,
+          audioUrl: `/api/books/file?pathname=${encodeURIComponent(saved.audioUrl)}`,
+          jsonUrl: `/api/books/file?pathname=${encodeURIComponent(saved.jsonUrl)}`,
+        },
+      })
+    } catch (error) {
+      console.error('[audiobook] Book save failed:', error)
+      return NextResponse.json({
+        error: error instanceof Error ? error.message : 'Não foi possível salvar o livro no banco de dados.',
+      }, { status: 500 })
+    }
+  }
+
   let formData: FormData
   try {
     formData = await request.formData()
@@ -134,7 +197,11 @@ export async function POST(request: Request) {
     })
   } catch (error) {
     console.error('[audiobook] Book upload failed:', error)
-    return NextResponse.json({ error: 'Não foi possível adicionar o livro agora.' }, { status: 500 })
+    const message = error instanceof Error ? error.message : 'Não foi possível adicionar o livro agora.'
+    return NextResponse.json({
+      error: message,
+      details: error instanceof Error ? error.stack : String(error),
+    }, { status: 500 })
   }
 }
 

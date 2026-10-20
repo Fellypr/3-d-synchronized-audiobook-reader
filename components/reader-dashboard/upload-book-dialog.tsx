@@ -2,7 +2,8 @@
 
 import { useRef, useState } from 'react'
 import { Dialog } from '@base-ui/react/dialog'
-import { FileAudio2, FileJson2, Upload, X } from 'lucide-react'
+import { FileAudio2, FileJson2, Upload, X, Loader2 } from 'lucide-react'
+import { upload } from '@vercel/blob/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -14,19 +15,13 @@ type UploadBookDialogProps = {
 
 type ExistingBook = { id: string; name: string }
 
-function errorMessage(payload: unknown, fallback: string) {
-  if (payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string') {
-    return payload.error
-  }
-  return fallback
-}
-
 export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDialogProps) {
   const audioInputRef = useRef<HTMLInputElement>(null)
   const jsonInputRef = useRef<HTMLInputElement>(null)
   const [audio, setAudio] = useState<File | null>(null)
   const [wordMap, setWordMap] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState('')
   const [error, setError] = useState('')
   const [fieldError, setFieldError] = useState('')
   const [conflict, setConflict] = useState<ExistingBook | null>(null)
@@ -43,6 +38,19 @@ export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDial
     setFieldError('')
     setError('')
     setConflict(null)
+  }
+
+  function resetAndClose() {
+    setAudio(null)
+    setWordMap(null)
+    setConflict(null)
+    setError('')
+    setFieldError('')
+    setUploadStatus('')
+    if (audioInputRef.current) audioInputRef.current.value = ''
+    if (jsonInputRef.current) jsonInputRef.current.value = ''
+    onOpenChange(false)
+    onAdded()
   }
 
   async function submit(replaceExisting = false) {
@@ -66,40 +74,110 @@ export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDial
       return
     }
 
-    const formData = new FormData()
-    formData.append('audio', audio)
-    formData.append('json', wordMap)
-    formData.append('name', name)
-    formData.append('replaceExisting', String(replaceExisting))
-
     setBusy(true)
+    setUploadStatus('Preparando arquivos...')
+
     try {
+      const sanitizedName = name.replace(/[^a-z0-9_-]+/gi, '_')
+      const audioExt = audio.name.split('.').pop()?.toLowerCase() || 'audio'
+
+      // 1. Try Direct Client Upload to Vercel Blob (bypasses Vercel 4.5 MB serverless limit)
+      let usedDirectUpload = false
+      let directAudioPathname = ''
+      let directJsonPathname = ''
+
+      try {
+        setUploadStatus('Enviando arquivos diretamente para o Vercel Blob...')
+        const [audioBlob, jsonBlob] = await Promise.all([
+          upload(`audiobooks/${sanitizedName}.${audioExt}`, audio, {
+            access: 'private',
+            handleUploadUrl: '/api/books/upload',
+            multipart: audio.size > 4.5 * 1024 * 1024,
+          }),
+          upload(`audiobooks/${sanitizedName}.json`, wordMap, {
+            access: 'private',
+            handleUploadUrl: '/api/books/upload',
+          }),
+        ])
+
+        directAudioPathname = audioBlob.pathname
+        directJsonPathname = jsonBlob.pathname
+        usedDirectUpload = true
+      } catch (directErr) {
+        console.warn('[upload] Direct client upload unavailable or failed, falling back to server upload:', directErr)
+      }
+
+      if (usedDirectUpload) {
+        setUploadStatus('Registrando livro na biblioteca...')
+        const response = await fetch('/api/books', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            audioUrl: directAudioPathname,
+            jsonUrl: directJsonPathname,
+            replaceExisting,
+          }),
+        })
+
+        let payload: any = null
+        try {
+          payload = await response.json()
+        } catch {}
+
+        if (response.status === 409 && payload?.book) {
+          setConflict(payload.book)
+          return
+        }
+
+        if (!response.ok) {
+          setError(payload?.error || 'Erro ao registrar livro na biblioteca.')
+          return
+        }
+
+        resetAndClose()
+        return
+      }
+
+      // 2. Fallback: Server-side FormData upload (used for small files or local dev without Blob token)
+      setUploadStatus('Enviando arquivos via servidor...')
+      const formData = new FormData()
+      formData.append('audio', audio)
+      formData.append('json', wordMap)
+      formData.append('name', name)
+      formData.append('replaceExisting', String(replaceExisting))
+
       const response = await fetch('/api/books', { method: 'POST', body: formData })
-      const payload: unknown = await response.json().catch(() => null)
+      let payload: any = null
+      let responseText = ''
+      try {
+        responseText = await response.text()
+        payload = JSON.parse(responseText)
+      } catch {}
 
       if (response.status === 409 && payload && typeof payload === 'object' && 'book' in payload) {
         const book = (payload as { book: ExistingBook }).book
         setConflict(book)
         return
       }
+
       if (!response.ok) {
-        setError(errorMessage(payload, 'Não foi possível adicionar o livro. Tente novamente.'))
+        if (response.status === 413) {
+          setError(`O arquivo de áudio (${(audio.size / (1024 * 1024)).toFixed(1)} MB) ultrapassa o limite de 4.5 MB da Vercel. Certifique-se de configurar o Vercel Blob no projeto da Vercel para permitir upload direto.`)
+          return
+        }
+        const errorText = payload?.error || payload?.details || (responseText && !responseText.startsWith('<!DOCTYPE') ? responseText : null)
+        setError(errorText || `Erro ${response.status}: Não foi possível adicionar o livro.`)
         return
       }
 
-      setAudio(null)
-      setWordMap(null)
-      setConflict(null)
-      setError('')
-      setFieldError('')
-      if (audioInputRef.current) audioInputRef.current.value = ''
-      if (jsonInputRef.current) jsonInputRef.current.value = ''
-      onOpenChange(false)
-      onAdded()
-    } catch {
-      setError('Não foi possível adicionar o livro agora. Tente novamente; seus arquivos continuam selecionados.')
+      resetAndClose()
+    } catch (fetchErr) {
+      console.error('[upload-book] Upload error:', fetchErr)
+      setError(fetchErr instanceof Error ? fetchErr.message : 'Falha na conexão ao adicionar o livro.')
     } finally {
       setBusy(false)
+      setUploadStatus('')
     }
   }
 
@@ -167,9 +245,10 @@ export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDial
                 <p className="text-sm font-medium">Já existe “{conflict.name}”.</p>
                 <p className="mt-1 text-sm text-library-muted">Substituirá os arquivos e manterá a posição de leitura.</p>
                 <div className="mt-3 flex flex-wrap justify-end gap-2">
-                  <Button type="button" variant="outline" className="h-11" onClick={() => setConflict(null)}>Cancelar</Button>
+                  <Button type="button" variant="outline" className="h-11" disabled={busy} onClick={() => setConflict(null)}>Cancelar</Button>
                   <Button type="button" disabled={busy} className="h-11 bg-library-ink text-library-surface hover:bg-library-ink/90" onClick={() => void submit(true)}>
-                    {busy ? 'Enviando…' : 'Substituir livro'}
+                    {busy && <Loader2 className="size-4 animate-spin" />}
+                    {busy ? (uploadStatus || 'Enviando…') : 'Substituir livro'}
                   </Button>
                 </div>
               </div>
@@ -177,8 +256,8 @@ export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDial
 
             {!conflict && (
               <Button type="submit" disabled={busy || !audio || !wordMap} className="h-11 w-full bg-library-accent text-library-accent-foreground hover:bg-library-accent/90">
-                <Upload aria-hidden="true" className="size-4" />
-                {busy ? 'Enviando arquivos…' : 'Adicionar livro'}
+                {busy ? <Loader2 className="size-4 animate-spin" /> : <Upload aria-hidden="true" className="size-4" />}
+                {busy ? (uploadStatus || 'Enviando arquivos…') : 'Adicionar livro'}
               </Button>
             )}
           </form>
