@@ -24,16 +24,16 @@ async function uploadToBlob(
 ) {
   try {
     return await upload(pathname, file, {
-      access: 'public',
+      access: 'private',
       handleUploadUrl: '/api/books/upload',
       multipart: file.size > 4.5 * 1024 * 1024,
       onUploadProgress: onProgress ? ({ percentage }) => onProgress(percentage) : undefined,
     })
   } catch (err: any) {
     const msg = err?.message || String(err)
-    if (msg.includes('private') || msg.includes('access mode') || msg.includes('BlobAccessError')) {
+    if (msg.includes('public') || msg.includes('access mode') || msg.includes('BlobAccessError')) {
       return await upload(pathname, file, {
-        access: 'private',
+        access: 'public',
         handleUploadUrl: '/api/books/upload',
         multipart: file.size > 4.5 * 1024 * 1024,
         onUploadProgress: onProgress ? ({ percentage }) => onProgress(percentage) : undefined,
@@ -174,8 +174,15 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
         return
       }
 
-      // If file is larger than 4.5 MB, server fallback is impossible on Vercel
-      if (audio.size > 4.5 * 1024 * 1024) {
+      const isLocalhost = typeof window !== 'undefined' && (
+        window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1' ||
+        window.location.hostname.endsWith('.local')
+      )
+
+      // If file is larger than 4.5 MB, server fallback is impossible on Vercel (4.5 MB serverless limit)
+      // On localhost, Next.js has no such limit and uses local disk storage (.storage)
+      if (!isLocalhost && audio.size > 4.5 * 1024 * 1024) {
         const detail = directError?.message || 'Falha ao conectar com o Vercel Blob.'
         setError(`Não foi possível enviar o áudio (${(audio.size / (1024 * 1024)).toFixed(1)} MB): ${detail}`)
         return

@@ -5,13 +5,18 @@ import { headers } from 'next/headers'
 
 export async function POST(request: Request): Promise<NextResponse> {
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    console.error('[upload] BLOB_READ_WRITE_TOKEN não configurado')
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[upload] BLOB_READ_WRITE_TOKEN não configurado em produção')
+    } else {
+      console.warn('[upload] BLOB_READ_WRITE_TOKEN ausente localmente. O sistema utilizará o armazenamento local.')
+    }
     return NextResponse.json(
       {
         error:
-          'O Vercel Blob não está configurado neste ambiente (BLOB_READ_WRITE_TOKEN ausente). Acesse o painel da Vercel (Project > Storage > Blob) para criar o repositório e vincular ao projeto.',
+          'O Vercel Blob não está configurado neste ambiente (BLOB_READ_WRITE_TOKEN ausente).',
+        directUploadDisabled: true,
       },
-      { status: 500 },
+      { status: 503 },
     )
   }
 

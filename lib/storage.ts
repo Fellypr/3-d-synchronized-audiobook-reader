@@ -27,18 +27,18 @@ export async function saveAudiobookFile(
       let blob
       try {
         blob = await put(`${pathPrefix}.${extension}`, file, {
-          access: 'public',
+          access: 'private',
           addRandomSuffix: true,
         })
-      } catch (pubErr: any) {
-        const msg = pubErr?.message || String(pubErr)
-        if (msg.includes('private') || msg.includes('access mode') || pubErr?.name === 'BlobAccessError') {
+      } catch (privErr: any) {
+        const msg = privErr?.message || String(privErr)
+        if (msg.includes('public') || msg.includes('access mode') || privErr?.name === 'BlobAccessError') {
           blob = await put(`${pathPrefix}.${extension}`, file, {
-            access: 'private',
+            access: 'public',
             addRandomSuffix: true,
           })
         } else {
-          throw pubErr
+          throw privErr
         }
       }
       console.log('[storage] Vercel Blob upload success:', { pathname: blob.pathname, url: blob.url })
@@ -161,20 +161,20 @@ export async function serveAudiobookFile(pathname: string, request: Request): Pr
       let result: any = null
       try {
         result = await get(pathname, {
-          access: 'public',
+          access: 'private',
           ifNoneMatch,
           headers: range ? { range } : undefined,
         })
-      } catch (pubErr: any) {
-        const msg = pubErr?.message || String(pubErr)
-        if (msg.includes('private') || msg.includes('access mode') || pubErr?.name === 'BlobAccessError') {
+      } catch (privErr: any) {
+        const msg = privErr?.message || String(privErr)
+        if (msg.includes('public') || msg.includes('access mode') || privErr?.name === 'BlobAccessError') {
           result = await get(pathname, {
-            access: 'private',
+            access: 'public',
             ifNoneMatch,
             headers: range ? { range } : undefined,
           })
         } else {
-          throw pubErr
+          throw privErr
         }
       }
 
