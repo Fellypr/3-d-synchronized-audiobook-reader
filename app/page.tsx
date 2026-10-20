@@ -15,5 +15,5 @@ export default async function Page() {
     db.select().from(audiobookProgress).where(eq(audiobookProgress.userId, session.user.id)).orderBy(desc(audiobookProgress.updatedAt)),
   ])
 
-  return <ReaderDashboard userName={session.user.name} books={books} progress={progress} />
+  return <ReaderDashboard userName={session.user.name} userId={session.user.id} books={books} progress={progress} />
 }

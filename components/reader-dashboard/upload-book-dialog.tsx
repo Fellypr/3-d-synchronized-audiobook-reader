@@ -12,16 +12,22 @@ type UploadBookDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   onAdded: () => void
+  userId?: string
 }
 
 type ExistingBook = { id: string; name: string }
 
-async function uploadToBlob(pathname: string, file: File) {
+async function uploadToBlob(
+  pathname: string,
+  file: File,
+  onProgress?: (percentage: number) => void,
+) {
   try {
     return await upload(pathname, file, {
       access: 'public',
       handleUploadUrl: '/api/books/upload',
       multipart: file.size > 4.5 * 1024 * 1024,
+      onUploadProgress: onProgress ? ({ percentage }) => onProgress(percentage) : undefined,
     })
   } catch (err: any) {
     const msg = err?.message || String(err)
@@ -30,20 +36,23 @@ async function uploadToBlob(pathname: string, file: File) {
         access: 'private',
         handleUploadUrl: '/api/books/upload',
         multipart: file.size > 4.5 * 1024 * 1024,
+        onUploadProgress: onProgress ? ({ percentage }) => onProgress(percentage) : undefined,
       })
     }
     throw err
   }
 }
 
-export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDialogProps) {
+export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: UploadBookDialogProps) {
   const { data: session } = useSession()
+  const activeUserId = userId || session?.user?.id
   const audioInputRef = useRef<HTMLInputElement>(null)
   const jsonInputRef = useRef<HTMLInputElement>(null)
   const [audio, setAudio] = useState<File | null>(null)
   const [wordMap, setWordMap] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
   const [uploadStatus, setUploadStatus] = useState('')
+  const [uploadProgress, setUploadProgress] = useState(0)
   const [error, setError] = useState('')
   const [fieldError, setFieldError] = useState('')
   const [conflict, setConflict] = useState<ExistingBook | null>(null)
@@ -69,6 +78,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDial
     setError('')
     setFieldError('')
     setUploadStatus('')
+    setUploadProgress(0)
     if (audioInputRef.current) audioInputRef.current.value = ''
     if (jsonInputRef.current) jsonInputRef.current.value = ''
     onOpenChange(false)
@@ -97,12 +107,13 @@ export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDial
     }
 
     setBusy(true)
+    setUploadProgress(0)
     setUploadStatus('Preparando arquivos...')
 
     try {
       const sanitizedName = name.replace(/[^a-z0-9_-]+/gi, '_')
       const audioExt = audio.name.split('.').pop()?.toLowerCase() || 'audio'
-      const userFolder = session?.user?.id ? `audiobooks/${session.user.id}` : 'audiobooks'
+      const userFolder = activeUserId ? `audiobooks/${activeUserId}` : 'audiobooks'
       const audioPathname = `${userFolder}/${sanitizedName}.${audioExt}`
       const jsonPathname = `${userFolder}/${sanitizedName}.json`
 
@@ -113,14 +124,17 @@ export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDial
       let directError: Error | null = null
 
       try {
-        setUploadStatus('Enviando arquivos diretamente para o Vercel Blob...')
-        const [audioBlob, jsonBlob] = await Promise.all([
-          uploadToBlob(audioPathname, audio),
-          uploadToBlob(jsonPathname, wordMap),
-        ])
-
-        directAudioPathname = audioBlob.pathname
+        setUploadStatus('Enviando mapa de palavras (JSON)...')
+        const jsonBlob = await uploadToBlob(jsonPathname, wordMap)
         directJsonPathname = jsonBlob.pathname
+
+        const audioMb = (audio.size / (1024 * 1024)).toFixed(1)
+        setUploadStatus(`Enviando áudio: 0% (${audioMb} MB)...`)
+        const audioBlob = await uploadToBlob(audioPathname, audio, (percentage) => {
+          setUploadProgress(percentage)
+          setUploadStatus(`Enviando áudio: ${percentage}% de ${audioMb} MB`)
+        })
+        directAudioPathname = audioBlob.pathname
         usedDirectUpload = true
       } catch (directErr) {
         directError = directErr instanceof Error ? directErr : new Error(String(directErr))
@@ -128,6 +142,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDial
       }
 
       if (usedDirectUpload) {
+        setUploadProgress(100)
         setUploadStatus('Registrando livro na biblioteca...')
         const response = await fetch('/api/books', {
           method: 'POST',
@@ -266,6 +281,26 @@ export function UploadBookDialog({ open, onOpenChange, onAdded }: UploadBookDial
 
             {fieldError && <p role="alert" className="text-sm font-medium text-destructive">{fieldError}</p>}
             {error && <div role="alert" aria-live="assertive" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">{error}</div>}
+
+            {busy && (
+              <div className="space-y-2 rounded-xl border border-library-border bg-library-selected/50 p-4" aria-live="polite">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2 font-medium text-library-ink">
+                    <Loader2 className="size-4 animate-spin text-library-accent" />
+                    {uploadStatus || 'Enviando arquivos…'}
+                  </span>
+                  {uploadProgress > 0 && (
+                    <span className="font-semibold text-library-accent">{uploadProgress}%</span>
+                  )}
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-library-border">
+                  <div
+                    className="h-full bg-library-accent transition-all duration-200"
+                    style={{ width: `${Math.max(uploadProgress, 6)}%` }}
+                  />
+                </div>
+              </div>
+            )}
 
             {conflict && (
               <div role="alert" aria-live="polite" className="rounded-xl border border-library-border bg-library-selected/70 p-4">

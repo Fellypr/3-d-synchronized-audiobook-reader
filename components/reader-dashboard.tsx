@@ -11,7 +11,17 @@ import { LibraryEmptyState } from '@/components/reader-dashboard/library-empty-s
 import { LibraryToolbar, type LibraryFilter, type LibraryView } from '@/components/reader-dashboard/library-toolbar'
 import { UploadBookDialog } from '@/components/reader-dashboard/upload-book-dialog'
 
-export function ReaderDashboard({ userName, books, progress }: { userName?: string; books: BookRecord[]; progress: ProgressRecord[] }) {
+export function ReaderDashboard({
+  userName,
+  userId,
+  books,
+  progress,
+}: {
+  userName?: string
+  userId?: string
+  books: BookRecord[]
+  progress: ProgressRecord[]
+}) {
   const router = useRouter()
   const [filter, setFilter] = useState<LibraryFilter>('all')
   const [view, setView] = useState<LibraryView>('list')
@@ -135,7 +145,7 @@ export function ReaderDashboard({ userName, books, progress }: { userName?: stri
         </section>
       </div>
 
-      <UploadBookDialog open={uploadOpen} onOpenChange={setUploadOpen} onAdded={showAddedBook} />
+      <UploadBookDialog open={uploadOpen} onOpenChange={setUploadOpen} onAdded={showAddedBook} userId={userId} />
     </main>
   )
 }

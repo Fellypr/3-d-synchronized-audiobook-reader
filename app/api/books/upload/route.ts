@@ -4,11 +4,6 @@ import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const session = await auth.api.getSession({ headers: await headers() })
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Não autorizado. Faça login novamente.' }, { status: 401 })
-  }
-
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     console.error('[upload] BLOB_READ_WRITE_TOKEN não configurado')
     return NextResponse.json(
@@ -27,6 +22,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'Corpo da requisição inválido.' }, { status: 400 })
   }
 
+  // Only authenticate when generating the client token from user browser
+  // When body.type is blob.upload-completed, it is a server-to-server webhook from Vercel without cookies
+  let sessionUser: { id: string } | null = null
+  if (body.type === 'blob.generate-client-token') {
+    const session = await auth.api.getSession({ headers: await headers() })
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Não autorizado. Faça login novamente.' }, { status: 401 })
+    }
+    sessionUser = session.user
+  }
+
   try {
     const jsonResponse = await handleUpload({
       body,
@@ -35,7 +41,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         return {
           addRandomSuffix: true,
           maximumSizeInBytes: 500 * 1024 * 1024, // 500 MB
-          tokenPayload: JSON.stringify({ userId: session.user.id }),
+          tokenPayload: sessionUser ? JSON.stringify({ userId: sessionUser.id }) : undefined,
         }
       },
       onUploadCompleted: async ({ blob }) => {
