@@ -61,7 +61,7 @@ export async function POST(request: Request) {
 
   // Support direct JSON submission when client uploads directly to Vercel Blob
   if (request.headers.get('content-type')?.includes('application/json')) {
-    let body: { name?: string; audioUrl?: string; jsonUrl?: string; replaceExisting?: boolean }
+    let body: { name?: string; audioUrl?: string; jsonUrl?: string; coverUrl?: string; replaceExisting?: boolean }
     try {
       body = await request.json()
     } catch {
@@ -71,6 +71,7 @@ export async function POST(request: Request) {
     const name = String(body.name || '').trim()
     const audioUrl = String(body.audioUrl || '').trim()
     const jsonUrl = String(body.jsonUrl || '').trim()
+    const coverUrl = body.coverUrl?.trim() || null
     const replaceExisting = Boolean(body.replaceExisting)
 
     if (!name || !audioUrl || !jsonUrl) {
@@ -93,7 +94,7 @@ export async function POST(request: Request) {
       const now = new Date()
       const [saved] = existing
         ? await db.update(book)
-          .set({ audioUrl, jsonUrl, durationSeconds: null, updatedAt: now })
+          .set({ audioUrl, jsonUrl, coverUrl: coverUrl ?? existing.coverUrl, durationSeconds: null, updatedAt: now })
           .where(and(eq(book.id, existing.id), eq(book.userId, session.user.id)))
           .returning()
         : await db.insert(book).values({
@@ -102,6 +103,7 @@ export async function POST(request: Request) {
           name,
           audioUrl,
           jsonUrl,
+          coverUrl,
           durationSeconds: null,
           createdAt: now,
           updatedAt: now,
@@ -132,6 +134,8 @@ export async function POST(request: Request) {
   const audio = formData.get('audio')
   const json = formData.get('json')
   const name = String(formData.get('name') || '').trim()
+  const rawCoverUrl = formData.get('coverUrl')
+  const coverUrl = typeof rawCoverUrl === 'string' && rawCoverUrl.trim() ? rawCoverUrl.trim() : null
   const replaceExisting = formData.get('replaceExisting') === 'true'
 
   if (!(audio instanceof File) || !(json instanceof File) || !name) {
@@ -174,7 +178,7 @@ export async function POST(request: Request) {
     const now = new Date()
     const [saved] = existing
       ? await db.update(book)
-        .set({ audioUrl: audioBlob.pathname, jsonUrl: jsonBlob.pathname, durationSeconds: null, updatedAt: now })
+        .set({ audioUrl: audioBlob.pathname, jsonUrl: jsonBlob.pathname, coverUrl: coverUrl ?? existing.coverUrl, durationSeconds: null, updatedAt: now })
         .where(and(eq(book.id, existing.id), eq(book.userId, session.user.id)))
         .returning()
       : await db.insert(book).values({
@@ -183,6 +187,7 @@ export async function POST(request: Request) {
         name,
         audioUrl: audioBlob.pathname,
         jsonUrl: jsonBlob.pathname,
+        coverUrl,
         durationSeconds: null,
         createdAt: now,
         updatedAt: now,

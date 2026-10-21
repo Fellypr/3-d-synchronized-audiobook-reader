@@ -14,8 +14,21 @@ type BookListItemProps = {
   onDeleted?: (bookId: string, bookName: string) => void
 }
 
-function CoverMark({ name }: { name: string }) {
+function CoverMark({ name, coverUrl }: { name: string; coverUrl?: string | null }) {
+  const [imageError, setImageError] = useState(false)
   const initials = name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toLocaleUpperCase('pt-BR')
+
+  if (coverUrl && !imageError) {
+    return (
+      <img
+        src={coverUrl}
+        alt={`Capa de ${name}`}
+        className="w-20 h-32 shrink-0 rounded-lg object-cover border border-library-border bg-library-selected shadow-sm"
+        onError={() => setImageError(true)}
+      />
+    )
+  }
+
   return (
     <span className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-library-selected text-sm font-semibold tracking-wide text-library-accent" aria-hidden="true">
       {initials || <BookOpen className="size-5" />}
@@ -74,7 +87,7 @@ export function BookListItem({ book, isLastRead, view, onDeleted }: BookListItem
 
   return (
     <li className={`group flex min-w-0 items-center gap-4 py-4 ${isGrid ? 'flex-col items-stretch border-b border-library-border sm:flex-row' : 'border-b border-library-border'}`}>
-      <CoverMark name={book.name} />
+      <CoverMark name={book.name} coverUrl={book.coverUrl} />
       <div className={`min-w-0 flex-1 ${isGrid ? 'w-full' : ''}`}>
         <div className="flex min-w-0 flex-wrap items-start gap-x-3 gap-y-1">
           <h3 className="min-w-0 break-words font-display text-lg leading-snug text-library-ink [overflow-wrap:anywhere]">{book.name}</h3>

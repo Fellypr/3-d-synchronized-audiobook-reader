@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react'
 import { Dialog } from '@base-ui/react/dialog'
-import { FileAudio2, FileJson2, Upload, X, Loader2 } from 'lucide-react'
+import { FileAudio2, FileJson2, Upload, X, Loader2, Type, Image as ImageIcon } from 'lucide-react'
 import { upload } from '@vercel/blob/client'
 import { useSession } from '@/lib/auth-client'
 import { Button } from '@/components/ui/button'
@@ -43,6 +43,13 @@ async function uploadToBlob(
   }
 }
 
+function cleanFileNameToTitle(fileName: string) {
+  return fileName
+    .replace(/\.(json|mp3|wav|m4a|aac|ogg|flac|opus)$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .trim()
+}
+
 export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: UploadBookDialogProps) {
   const { data: session } = useSession()
   const activeUserId = userId || session?.user?.id
@@ -50,6 +57,9 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   const jsonInputRef = useRef<HTMLInputElement>(null)
   const [audio, setAudio] = useState<File | null>(null)
   const [wordMap, setWordMap] = useState<File | null>(null)
+  const [title, setTitle] = useState('')
+  const [coverUrl, setCoverUrl] = useState('')
+  const [isTitleCustomized, setIsTitleCustomized] = useState(false)
   const [busy, setBusy] = useState(false)
   const [uploadStatus, setUploadStatus] = useState('')
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -62,6 +72,9 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     setFieldError('')
     setError('')
     setConflict(null)
+    if (file && (!title.trim() || !isTitleCustomized) && !wordMap) {
+      setTitle(cleanFileNameToTitle(file.name))
+    }
   }
 
   function setMapFile(file?: File) {
@@ -69,11 +82,17 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     setFieldError('')
     setError('')
     setConflict(null)
+    if (file && (!title.trim() || !isTitleCustomized)) {
+      setTitle(cleanFileNameToTitle(file.name))
+    }
   }
 
   function resetAndClose() {
     setAudio(null)
     setWordMap(null)
+    setTitle('')
+    setCoverUrl('')
+    setIsTitleCustomized(false)
     setConflict(null)
     setError('')
     setFieldError('')
@@ -100,9 +119,9 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
       return
     }
 
-    const name = wordMap.name.replace(/\.json$/i, '').trim()
+    const name = (title.trim() || cleanFileNameToTitle(wordMap.name)).trim()
     if (!name) {
-      setFieldError('O arquivo JSON precisa ter um nome válido.')
+      setFieldError('Informe um título válido para o livro.')
       return
     }
 
@@ -149,6 +168,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name,
+            coverUrl: coverUrl.trim() || undefined,
             audioUrl: directAudioPathname,
             jsonUrl: directJsonPathname,
             replaceExisting,
@@ -194,6 +214,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
       formData.append('audio', audio)
       formData.append('json', wordMap)
       formData.append('name', name)
+      if (coverUrl.trim()) formData.append('coverUrl', coverUrl.trim())
       formData.append('replaceExisting', String(replaceExisting))
 
       const response = await fetch('/api/books', { method: 'POST', body: formData })
@@ -286,6 +307,64 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
               />
             </label>
 
+            <div className="space-y-1.5">
+              <label htmlFor="book-title-input" className="flex items-center gap-2 text-sm font-medium text-library-ink">
+                <Type className="size-4 text-library-accent" />
+                Título do livro
+              </label>
+              <Input
+                id="book-title-input"
+                type="text"
+                value={title}
+                onChange={(event) => {
+                  setTitle(event.target.value)
+                  setIsTitleCustomized(true)
+                }}
+                placeholder={wordMap ? cleanFileNameToTitle(wordMap.name) : 'Ex: Dom Casmurro'}
+                disabled={busy}
+                className="h-11 border-library-border bg-library-surface text-library-ink placeholder:text-library-muted focus-visible:outline-library-accent"
+              />
+              <p className="text-xs text-library-muted">
+                Preenchido automaticamente ao selecionar o arquivo, mas você pode editar se desejar.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="book-cover-input" className="flex items-center gap-2 text-sm font-medium text-library-ink">
+                <ImageIcon className="size-4 text-library-accent" />
+                URL da imagem da capa <span className="text-xs font-normal text-library-muted">(opcional)</span>
+              </label>
+              <div className="flex items-center gap-3">
+                <Input
+                  id="book-cover-input"
+                  type="url"
+                  value={coverUrl}
+                  onChange={(event) => setCoverUrl(event.target.value)}
+                  placeholder="https://exemplo.com/capa.jpg"
+                  disabled={busy}
+                  className="h-11 flex-1 border-library-border bg-library-surface text-library-ink placeholder:text-library-muted focus-visible:outline-library-accent"
+                />
+                {coverUrl.trim() && (
+                  <div className="relative size-11 shrink-0 overflow-hidden rounded-lg border border-library-border bg-library-selected">
+                    <img
+                      src={coverUrl.trim()}
+                      alt="Prévia da capa"
+                      className="size-full object-cover"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLElement).style.display = 'none'
+                      }}
+                      onLoad={(e) => {
+                        (e.currentTarget as HTMLElement).style.display = 'block'
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-library-muted">
+                Cole o link de uma imagem (JPG, PNG, WebP) para exibir como capa do livro.
+              </p>
+            </div>
+
             {fieldError && <p role="alert" className="text-sm font-medium text-destructive">{fieldError}</p>}
             {error && <div role="alert" aria-live="assertive" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">{error}</div>}
 
@@ -324,7 +403,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
             )}
 
             {!conflict && (
-              <Button type="submit" disabled={busy || !audio || !wordMap} className="h-11 w-full bg-library-accent text-library-accent-foreground hover:bg-library-accent/90">
+              <Button type="submit" disabled={busy || !audio || !wordMap || (!title.trim() && !wordMap?.name)} className="h-11 w-full bg-library-accent text-library-accent-foreground hover:bg-library-accent/90">
                 {busy ? <Loader2 className="size-4 animate-spin" /> : <Upload aria-hidden="true" className="size-4" />}
                 {busy ? (uploadStatus || 'Enviando arquivos…') : 'Adicionar livro'}
               </Button>

@@ -16,6 +16,13 @@ async function migrate() {
     `)
     console.log('✓ Coluna "durationSeconds" adicionada/verificada em "book"')
 
+    // 1.1 Adicionar coverUrl na tabela book
+    await pool.query(`
+      ALTER TABLE "book" 
+      ADD COLUMN IF NOT EXISTS "coverUrl" text;
+    `)
+    console.log('✓ Coluna "coverUrl" adicionada/verificada em "book"')
+
     // 2. Adicionar bookId na tabela audiobookProgress
     await pool.query(`
       ALTER TABLE "audiobookProgress" 
