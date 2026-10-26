@@ -36,7 +36,11 @@ export async function GET(request: Request) {
       .from(book)
       .where(and(
         eq(book.userId, session.user.id),
-        or(eq(book.audioUrl, pathname), eq(book.jsonUrl, pathname))
+        or(
+          eq(book.audioUrl, pathname),
+          eq(book.jsonUrl, pathname),
+          eq(book.pdfUrl, pathname),
+        )
       ))
       .limit(1)
 

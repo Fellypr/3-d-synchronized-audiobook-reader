@@ -26,6 +26,7 @@ export async function GET(request: Request) {
       ...latest,
       audioUrl: `/api/books/file?pathname=${encodeURIComponent(latest.audioUrl)}`,
       jsonUrl: `/api/books/file?pathname=${encodeURIComponent(latest.jsonUrl)}`,
+      pdfUrl: latest.pdfUrl ? `/api/books/file?pathname=${encodeURIComponent(latest.pdfUrl)}` : null,
     },
   })
 }
@@ -61,7 +62,7 @@ export async function POST(request: Request) {
 
   // Support direct JSON submission when client uploads directly to Vercel Blob
   if (request.headers.get('content-type')?.includes('application/json')) {
-    let body: { name?: string; audioUrl?: string; jsonUrl?: string; coverUrl?: string; replaceExisting?: boolean }
+    let body: { name?: string; audioUrl?: string; jsonUrl?: string; pdfUrl?: string; coverUrl?: string; replaceExisting?: boolean }
     try {
       body = await request.json()
     } catch {
@@ -71,6 +72,7 @@ export async function POST(request: Request) {
     const name = String(body.name || '').trim()
     const audioUrl = String(body.audioUrl || '').trim()
     const jsonUrl = String(body.jsonUrl || '').trim()
+    const pdfUrl = body.pdfUrl?.trim() || null
     const coverUrl = body.coverUrl?.trim() || null
     const replaceExisting = Boolean(body.replaceExisting)
 
@@ -94,7 +96,14 @@ export async function POST(request: Request) {
       const now = new Date()
       const [saved] = existing
         ? await db.update(book)
-          .set({ audioUrl, jsonUrl, coverUrl: coverUrl ?? existing.coverUrl, durationSeconds: null, updatedAt: now })
+          .set({
+            audioUrl,
+            jsonUrl,
+            pdfUrl: pdfUrl ?? existing.pdfUrl,
+            coverUrl: coverUrl ?? existing.coverUrl,
+            durationSeconds: null,
+            updatedAt: now,
+          })
           .where(and(eq(book.id, existing.id), eq(book.userId, session.user.id)))
           .returning()
         : await db.insert(book).values({
@@ -103,6 +112,7 @@ export async function POST(request: Request) {
           name,
           audioUrl,
           jsonUrl,
+          pdfUrl,
           coverUrl,
           durationSeconds: null,
           createdAt: now,
@@ -114,6 +124,7 @@ export async function POST(request: Request) {
           ...saved,
           audioUrl: `/api/books/file?pathname=${encodeURIComponent(saved.audioUrl)}`,
           jsonUrl: `/api/books/file?pathname=${encodeURIComponent(saved.jsonUrl)}`,
+          pdfUrl: saved.pdfUrl ? `/api/books/file?pathname=${encodeURIComponent(saved.pdfUrl)}` : null,
         },
       })
     } catch (error) {
@@ -171,14 +182,23 @@ export async function POST(request: Request) {
 
   try {
     const prefix = `audiobooks/${session.user.id}/${name.replace(/[^a-z0-9_-]+/gi, '_')}`
-    const [audioBlob, jsonBlob] = await Promise.all([
+    const pdf = formData.get('pdf')
+    const [audioBlob, jsonBlob, pdfBlob] = await Promise.all([
       saveAudiobookFile(prefix, 'audio', audio),
       saveAudiobookFile(prefix, 'json', json),
+      pdf instanceof File && pdf.size > 0 ? saveAudiobookFile(prefix, 'pdf', pdf) : Promise.resolve(null),
     ])
     const now = new Date()
     const [saved] = existing
       ? await db.update(book)
-        .set({ audioUrl: audioBlob.pathname, jsonUrl: jsonBlob.pathname, coverUrl: coverUrl ?? existing.coverUrl, durationSeconds: null, updatedAt: now })
+        .set({
+          audioUrl: audioBlob.pathname,
+          jsonUrl: jsonBlob.pathname,
+          pdfUrl: pdfBlob ? pdfBlob.pathname : existing.pdfUrl,
+          coverUrl: coverUrl ?? existing.coverUrl,
+          durationSeconds: null,
+          updatedAt: now,
+        })
         .where(and(eq(book.id, existing.id), eq(book.userId, session.user.id)))
         .returning()
       : await db.insert(book).values({
@@ -187,6 +207,7 @@ export async function POST(request: Request) {
         name,
         audioUrl: audioBlob.pathname,
         jsonUrl: jsonBlob.pathname,
+        pdfUrl: pdfBlob ? pdfBlob.pathname : null,
         coverUrl,
         durationSeconds: null,
         createdAt: now,
@@ -198,6 +219,7 @@ export async function POST(request: Request) {
         ...saved,
         audioUrl: `/api/books/file?pathname=${encodeURIComponent(saved.audioUrl)}`,
         jsonUrl: `/api/books/file?pathname=${encodeURIComponent(saved.jsonUrl)}`,
+        pdfUrl: saved.pdfUrl ? `/api/books/file?pathname=${encodeURIComponent(saved.pdfUrl)}` : null,
       },
     })
   } catch (error) {
@@ -251,8 +273,8 @@ export async function DELETE(request: Request) {
       and(eq(book.id, bookId), eq(book.userId, session.user.id)),
     )
 
-    // 3. Delete stored audio and json files (local + blob)
-    await deleteAudiobookFiles(existing.audioUrl, existing.jsonUrl)
+    // 3. Delete stored audio, json and pdf files (local + blob)
+    await deleteAudiobookFiles(existing.audioUrl, existing.jsonUrl, existing.pdfUrl)
 
     console.log('[api/books] Successfully deleted book:', existing.name, 'id:', bookId)
     return NextResponse.json({ success: true, id: bookId, name: existing.name })

@@ -9,7 +9,7 @@ const STORAGE_DIR = path.join(process.cwd(), '.storage')
 
 export async function saveAudiobookFile(
   pathPrefix: string,
-  extension: 'audio' | 'json',
+  extension: 'audio' | 'json' | 'pdf' | string,
   file: File
 ): Promise<{ pathname: string }> {
   console.log('[storage] saveAudiobookFile called:', {
@@ -70,7 +70,7 @@ export async function saveAudiobookFile(
   // Save metadata with original MIME content-type
   const metaPath = `${fullPath}.meta`
   const meta = {
-    contentType: file.type || (extension === 'json' ? 'application/json' : 'audio/mpeg'),
+    contentType: file.type || (extension === 'json' ? 'application/json' : extension === 'pdf' ? 'application/pdf' : 'audio/mpeg'),
   }
   await fsPromises.writeFile(metaPath, JSON.stringify(meta), 'utf-8')
 
@@ -97,7 +97,11 @@ export async function serveAudiobookFile(pathname: string, request: Request): Pr
     const stat = await fsPromises.stat(localPath)
     const fileSize = stat.size
 
-    let contentType = pathname.endsWith('.json') ? 'application/json' : 'audio/mpeg'
+    let contentType = pathname.endsWith('.json')
+      ? 'application/json'
+      : pathname.endsWith('.pdf')
+      ? 'application/pdf'
+      : 'audio/mpeg'
     const metaPath = `${localPath}.meta`
     if (fs.existsSync(metaPath)) {
       try {
@@ -207,7 +211,13 @@ export async function serveAudiobookFile(pathname: string, request: Request): Pr
       }
 
       const headers: Record<string, string> = {
-        'Content-Type': result.blob.contentType ?? (pathname.endsWith('.json') ? 'application/json' : 'audio/mpeg'),
+        'Content-Type': result.blob.contentType ?? (
+          pathname.endsWith('.json')
+            ? 'application/json'
+            : pathname.endsWith('.pdf')
+            ? 'application/pdf'
+            : 'audio/mpeg'
+        ),
         'Cache-Control': 'private, no-cache',
         ETag: result.blob.etag,
         'Accept-Ranges': 'bytes',
@@ -257,8 +267,12 @@ export async function serveAudiobookFile(pathname: string, request: Request): Pr
   })
 }
 
-export async function deleteAudiobookFiles(audioUrl?: string | null, jsonUrl?: string | null): Promise<void> {
-  const paths = [audioUrl, jsonUrl].filter(Boolean) as string[]
+export async function deleteAudiobookFiles(
+  audioUrl?: string | null,
+  jsonUrl?: string | null,
+  pdfUrl?: string | null
+): Promise<void> {
+  const paths = [audioUrl, jsonUrl, pdfUrl].filter(Boolean) as string[]
   if (paths.length === 0) return
 
   // 1. Delete from local filesystem if exists

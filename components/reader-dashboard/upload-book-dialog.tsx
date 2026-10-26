@@ -82,8 +82,10 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   // Inputs manuais
   const audioInputRef = useRef<HTMLInputElement>(null)
   const jsonInputRef = useRef<HTMLInputElement>(null)
+  const manualPdfInputRef = useRef<HTMLInputElement>(null)
   const [audio, setAudio] = useState<File | null>(null)
   const [wordMap, setWordMap] = useState<File | null>(null)
+  const [manualPdf, setManualPdf] = useState<File | null>(null)
 
   // Inputs de IA (PDF/DOCX)
   const docInputRef = useRef<HTMLInputElement>(null)
@@ -102,7 +104,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   const [error, setError] = useState('')
   const [fieldError, setFieldError] = useState('')
   const [conflict, setConflict] = useState<ExistingBook | null>(null)
-  const pendingFilesRef = useRef<{ audio: File; json: File; name: string } | null>(null)
+  const pendingFilesRef = useRef<{ audio: File; json: File; pdf?: File; name: string } | null>(null)
 
   function setAudioFile(file?: File) {
     setAudio(file ?? null)
@@ -137,6 +139,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   function resetAndClose() {
     setAudio(null)
     setWordMap(null)
+    setManualPdf(null)
     setDocFile(null)
     setTitle('')
     setCoverUrl('')
@@ -150,15 +153,22 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     pendingFilesRef.current = null
     if (audioInputRef.current) audioInputRef.current.value = ''
     if (jsonInputRef.current) jsonInputRef.current.value = ''
+    if (manualPdfInputRef.current) manualPdfInputRef.current.value = ''
     if (docInputRef.current) docInputRef.current.value = ''
     onOpenChange(false)
     onAdded()
   }
 
   /**
-   * Salva os arquivos de áudio e mapa na infraestrutura permanente (Vercel Blob / Local Storage)
+   * Salva os arquivos de áudio, mapa e PDF original na infraestrutura permanente (Vercel Blob / Local Storage)
    */
-  async function persistBookFiles(audioFile: File, jsonFile: File, bookName: string, replaceExisting = false) {
+  async function persistBookFiles(
+    audioFile: File,
+    jsonFile: File,
+    bookName: string,
+    replaceExisting = false,
+    pdfFile?: File | null,
+  ) {
     const sanitizedName = bookName.replace(/[^a-z0-9_-]+/gi, '_')
     const audioExt = audioFile.name.split('.').pop()?.toLowerCase() || 'mp3'
     const userFolder = activeUserId ? `audiobooks/${activeUserId}` : 'audiobooks'
@@ -168,9 +178,18 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     let usedDirectUpload = false
     let directAudioPathname = ''
     let directJsonPathname = ''
+    let directPdfPathname = ''
     let directError: Error | null = null
 
     try {
+      if (pdfFile) {
+        const pdfExt = pdfFile.name.split('.').pop()?.toLowerCase() || 'pdf'
+        const pdfPathname = `${userFolder}/${sanitizedName}.${pdfExt}`
+        setUploadStatus('Salvando documento original na nuvem...')
+        const pdfBlob = await uploadToBlob(pdfPathname, pdfFile)
+        directPdfPathname = pdfBlob.pathname
+      }
+
       setUploadStatus('Salvando mapa de palavras na nuvem...')
       const jsonBlob = await uploadToBlob(jsonPathname, jsonFile)
       directJsonPathname = jsonBlob.pathname
@@ -199,6 +218,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
           coverUrl: coverUrl.trim() || undefined,
           audioUrl: directAudioPathname,
           jsonUrl: directJsonPathname,
+          pdfUrl: directPdfPathname || undefined,
           replaceExisting,
         }),
       })
@@ -209,7 +229,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
       } catch {}
 
       if (response.status === 409 && payload?.book) {
-        pendingFilesRef.current = { audio: audioFile, json: jsonFile, name: bookName }
+        pendingFilesRef.current = { audio: audioFile, json: jsonFile, pdf: pdfFile ?? undefined, name: bookName }
         setConflict(payload.book)
         return
       }
@@ -241,6 +261,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     formData.append('audio', audioFile)
     formData.append('json', jsonFile)
     formData.append('name', bookName)
+    if (pdfFile) formData.append('pdf', pdfFile)
     if (coverUrl.trim()) formData.append('coverUrl', coverUrl.trim())
     formData.append('replaceExisting', String(replaceExisting))
 
@@ -251,7 +272,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     } catch {}
 
     if (response.status === 409 && payload?.book) {
-      pendingFilesRef.current = { audio: audioFile, json: jsonFile, name: bookName }
+      pendingFilesRef.current = { audio: audioFile, json: jsonFile, pdf: pdfFile ?? undefined, name: bookName }
       setConflict(payload.book)
       return
     }
@@ -276,7 +297,8 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
           pendingFilesRef.current.audio,
           pendingFilesRef.current.json,
           pendingFilesRef.current.name,
-          true
+          true,
+          pendingFilesRef.current.pdf
         )
       } finally {
         setBusy(false)
@@ -317,7 +339,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
         const audioFile = new File([result.audioBlob], `${name}.mp3`, { type: 'audio/mpeg' })
         const jsonFile = new File([result.jsonBlob], `${name}.json`, { type: 'application/json' })
 
-        await persistBookFiles(audioFile, jsonFile, name, replaceExisting)
+        await persistBookFiles(audioFile, jsonFile, name, replaceExisting, docFile)
       } catch (err: any) {
         console.error('[UploadBookDialog] Erro na síntese via IA:', err)
         setError(err?.message || 'Falha ao processar o documento com a API de IA.')
@@ -351,7 +373,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     setUploadStatus('Preparando arquivos...')
 
     try {
-      await persistBookFiles(audio, wordMap, name, replaceExisting)
+      await persistBookFiles(audio, wordMap, name, replaceExisting, manualPdf)
     } catch (fetchErr) {
       console.error('[upload-book] Upload error:', fetchErr)
       setError(fetchErr instanceof Error ? fetchErr.message : 'Falha na conexão ao adicionar o livro.')
@@ -533,6 +555,25 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                     aria-label="Selecionar mapa de palavras JSON"
                     disabled={busy}
                     onChange={(event) => setMapFile(event.currentTarget.files?.[0])}
+                  />
+                </label>
+
+                {/* Upload Manual de Documento PDF (Opcional) */}
+                <label className="group flex min-h-16 cursor-pointer items-center gap-3 rounded-xl border border-dashed border-library-border px-4 py-3 transition-colors hover:border-library-accent/70 hover:bg-library-selected/60 has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-library-accent">
+                  <FileText aria-hidden="true" className="size-5 shrink-0 text-library-accent" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium">Documento PDF <span className="text-xs text-library-muted">(opcional)</span></span>
+                    <span className="mt-0.5 block text-sm text-library-muted">Arquivo original para visualização da folha real</span>
+                  </span>
+                  <span className="max-w-36 truncate text-sm text-library-muted sm:max-w-48">{manualPdf?.name ?? 'Selecionar'}</span>
+                  <Input
+                    ref={manualPdfInputRef}
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    className="sr-only"
+                    aria-label="Selecionar documento PDF original"
+                    disabled={busy}
+                    onChange={(event) => setManualPdf(event.currentTarget.files?.[0] ?? null)}
                   />
                 </label>
               </>

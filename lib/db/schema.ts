@@ -52,6 +52,7 @@ export const book = pgTable('book', {
   name: text('name').notNull(),
   audioUrl: text('audioUrl').notNull(),
   jsonUrl: text('jsonUrl').notNull(),
+  pdfUrl: text('pdfUrl'),
   coverUrl: text('coverUrl'),
   durationSeconds: real('durationSeconds'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),

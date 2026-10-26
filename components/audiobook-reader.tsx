@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { BookOpen, Bookmark, BookmarkCheck, ChevronLeft, ChevronRight, FileAudio, FileJson, Home, Minus, Pause, Play, Plus, Settings2, SkipBack, SkipForward, Upload, X } from 'lucide-react'
+import { BookOpen, Bookmark, BookmarkCheck, ChevronLeft, ChevronRight, FileAudio, FileJson, FileText, Home, Minus, Pause, Play, Plus, Settings2, SkipBack, SkipForward, Upload, X } from 'lucide-react'
+import type { PDFDocumentProxy } from 'pdfjs-dist'
+import { mapPdfDocumentToWords, type PageWordRange, type WordPosition } from '@/lib/books/pdf-sync'
+import { PdfPageSheet } from '@/components/reader-dashboard/pdf-page-sheet'
 
 type Word = { p: string; i: number; f: number }
 
@@ -34,6 +37,11 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
   const [flip, setFlip] = useState(0)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [coverUrl, setCoverUrl] = useState<string | null>(null)
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
+  const [pdfPageRanges, setPdfPageRanges] = useState<PageWordRange[]>([])
+  const [pdfWordPositions, setPdfWordPositions] = useState<Map<number, WordPosition[]>>(new Map())
+  const [viewMode, setViewMode] = useState<'sheet' | 'text'>('sheet')
   const [audioReady, setAudioReady] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [resumePrompt, setResumePrompt] = useState<number | null>(null)
@@ -54,9 +62,16 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
   const settingsKey = useMemo(() => storageKey('audiobook_settings', title), [title])
   const listenedSecondsKey = useMemo(() => storageKey('audiobook_listened_seconds', title), [title])
 
+  const isSheetMode = Boolean(pdfDoc && viewMode === 'sheet')
   const wordsPerPage = Math.max(34, Math.round(58 - (fontSize - 16) * 1.6 - (lineHeight - 1.5) * 10))
   const pages = useMemo(() => { const result: Word[][] = []; for (let i = 0; i < words.length; i += wordsPerPage) result.push(words.slice(i, i + wordsPerPage)); return result }, [words, wordsPerPage])
-  const totalSpreads = Math.max(1, Math.ceil(pages.length / 2))
+  const totalSpreads = useMemo(() => {
+    if (isSheetMode && pdfDoc) {
+      return Math.max(1, Math.ceil(pdfDoc.numPages / 2))
+    }
+    return Math.max(1, Math.ceil(pages.length / 2))
+  }, [isSheetMode, pdfDoc, pages.length])
+
   const spreadStart = page * wordsPerPage * 2
   const currentSpread = [words.slice(spreadStart, spreadStart + wordsPerPage), words.slice(spreadStart + wordsPerPage, spreadStart + wordsPerPage * 2)]
   const duration = audioDuration ?? Math.max(1, (words.at(-1)?.f ?? 1) + 0.5)
@@ -66,16 +81,81 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
     const index = findWord(words, nextTime)
     setTime(nextTime)
     setActive(index)
-    setPage(Math.min(totalSpreads - 1, Math.floor(index / (wordsPerPage * 2))))
-  }, [totalSpreads, words, wordsPerPage])
+    if (pdfDoc && viewMode === 'sheet' && pdfPageRanges.length > 0) {
+      const range = pdfPageRanges.find((r) => index >= r.startWordIndex && index <= r.endWordIndex)
+      const targetPageNum = range
+        ? range.pageNumber
+        : Math.min(pdfDoc.numPages, Math.floor((index / Math.max(1, words.length)) * pdfDoc.numPages) + 1)
+      const targetSpread = Math.min(totalSpreads - 1, Math.floor((targetPageNum - 1) / 2))
+      setPage(targetSpread)
+    } else {
+      setPage(Math.min(totalSpreads - 1, Math.floor(index / (wordsPerPage * 2))))
+    }
+  }, [pdfDoc, pdfPageRanges, totalSpreads, viewMode, words, wordsPerPage])
 
-  const tick = useCallback(() => { const next = audioRef.current ? audioRef.current.currentTime : Math.min(duration, time + 0.045 * speed); setTime(next); const index = findWord(words, next); setActive(index); const nextPage = Math.min(totalSpreads - 1, Math.floor(index / (wordsPerPage * 2))); if (nextPage !== page) { setPage(nextPage); setFlip((value) => value + 1) }; if (playing) rafRef.current = requestAnimationFrame(tick) }, [duration, page, playing, speed, time, totalSpreads, words, wordsPerPage])
+  const tick = useCallback(() => {
+    const next = audioRef.current ? audioRef.current.currentTime : Math.min(duration, time + 0.045 * speed)
+    setTime(next)
+    const index = findWord(words, next)
+    setActive(index)
+    let nextPage: number
+    if (pdfDoc && viewMode === 'sheet' && pdfPageRanges.length > 0) {
+      const range = pdfPageRanges.find((r) => index >= r.startWordIndex && index <= r.endWordIndex)
+      const targetPageNum = range
+        ? range.pageNumber
+        : Math.min(pdfDoc.numPages, Math.floor((index / Math.max(1, words.length)) * pdfDoc.numPages) + 1)
+      nextPage = Math.min(totalSpreads - 1, Math.floor((targetPageNum - 1) / 2))
+    } else {
+      nextPage = Math.min(totalSpreads - 1, Math.floor(index / (wordsPerPage * 2)))
+    }
+    if (nextPage !== page) {
+      setPage(nextPage)
+      setFlip((value) => value + 1)
+    }
+    if (playing) rafRef.current = requestAnimationFrame(tick)
+  }, [duration, page, pdfDoc, pdfPageRanges, playing, speed, time, totalSpreads, viewMode, words, wordsPerPage])
   useEffect(() => { if (playing) rafRef.current = requestAnimationFrame(tick); return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) } }, [playing, tick])
+
+  useEffect(() => {
+    if (!pdfUrl) {
+      setPdfDoc(null)
+      setPdfPageRanges([])
+      setPdfWordPositions(new Map())
+      return
+    }
+
+    let cancelled = false
+    async function loadPdf() {
+      try {
+        const pdfjsLib = await import('pdfjs-dist')
+        if (typeof window !== 'undefined') {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+        }
+
+        const doc = await pdfjsLib.getDocument(pdfUrl!).promise
+        if (cancelled) return
+        setPdfDoc(doc)
+
+        if (words.length > 0) {
+          const { pageRanges, pageWordPositions } = await mapPdfDocumentToWords(doc, words)
+          if (!cancelled) {
+            setPdfPageRanges(pageRanges)
+            setPdfWordPositions(pageWordPositions)
+          }
+        }
+      } catch (err) {
+        console.warn('[audiobook-reader] Falha ao carregar PDF original para a folha real:', err)
+      }
+    }
+
+    void loadPdf()
+    return () => { cancelled = true }
+  }, [pdfUrl, words])
 
   useEffect(() => {
     let cancelled = false
     fetch(bookId ? `/api/books?id=${encodeURIComponent(bookId)}` : '/api/books').then(response => response.ok ? response.json() : null).then(async payload => {
-      const savedBook = payload?.book as { name?: string; audioUrl?: string; jsonUrl?: string; coverUrl?: string | null } | null
+      const savedBook = payload?.book as { name?: string; audioUrl?: string; jsonUrl?: string; pdfUrl?: string | null; coverUrl?: string | null } | null
       if (cancelled || !savedBook?.audioUrl) {
         setIsLoading(false)
         return
@@ -87,6 +167,7 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
       setTitle(savedName)
       setAudioUrl(savedBook.audioUrl)
       if (savedBook.coverUrl) setCoverUrl(savedBook.coverUrl)
+      if (savedBook.pdfUrl) setPdfUrl(savedBook.pdfUrl)
       try {
         const progressPath = bookId
           ? `/api/progress?bookId=${encodeURIComponent(bookId)}`
@@ -290,7 +371,21 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
     saveProgress(next)
     setActive(index)
   }
-  function navigate(nextPage: number) { const next = Math.max(0, Math.min(totalSpreads - 1, nextPage)); setPage(next); setFlip((value) => value + 1); const index = next * wordsPerPage * 2; if (words[index]) seek(index) }
+  function navigate(nextPage: number) {
+    const next = Math.max(0, Math.min(totalSpreads - 1, nextPage))
+    setPage(next)
+    setFlip((value) => value + 1)
+    if (pdfDoc && viewMode === 'sheet' && pdfPageRanges.length > 0) {
+      const targetPageNum = next * 2 + 1
+      const range = pdfPageRanges.find((r) => r.pageNumber === targetPageNum)
+      if (range && words[range.startWordIndex]) {
+        seek(range.startWordIndex)
+        return
+      }
+    }
+    const index = next * wordsPerPage * 2
+    if (words[index]) seek(index)
+  }
   async function persistBook(audio: File, json: File) {
     const name = json.name.replace(/\.json$/i, '')
     setIsLoading(true)
@@ -410,12 +505,30 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
     <AnimatePresence>{resumePrompt !== null && <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="fixed left-1/2 top-20 z-40 w-[calc(100%-32px)] max-w-lg -translate-x-1/2 rounded-2xl border border-black/10 bg-[#faf9f6] p-5 shadow-2xl"><p className="text-sm font-semibold">Deseja continuar de onde parou?</p><p className="mt-1 text-sm text-[#756e65]">Você estava em {Math.floor(resumePrompt / 60)}:{String(Math.floor(resumePrompt % 60)).padStart(2, '0')}.</p><div className="mt-4 flex gap-2"><button onClick={() => { const audio = audioRef.current; const mediaDuration = audio?.duration ?? 0; const nextTime = Number.isFinite(mediaDuration) && mediaDuration > 0 ? Math.min(resumePrompt, Math.max(0, mediaDuration - 0.05)) : resumePrompt; if (audio && Number.isFinite(nextTime)) audio.currentTime = nextTime; syncReaderToTime(nextTime); setRestoreTime(nextTime); setResumePrompt(null) }} className="rounded-xl bg-[#20201e] px-4 py-2 text-sm font-medium text-white">Sim, continuar</button><button onClick={() => { saveProgress(0); setResumePrompt(null); setTime(0); setActive(0); setPage(0) }} className="rounded-xl border border-black/10 px-4 py-2 text-sm">Recomeçar do início</button></div></motion.div>}</AnimatePresence>
     <header className="relative z-20 flex h-[76px] items-center justify-between border-b border-black/10 bg-[#f7f5f0]/90 px-5 backdrop-blur-md md:px-10">
       <div className="flex items-center gap-3">{coverUrl ? <img src={coverUrl} alt={title} className="size-9 shrink-0 rounded-lg object-cover border border-black/10 shadow-sm" onError={() => setCoverUrl(null)} /> : <div className="flex size-9 items-center justify-center rounded-lg bg-[#20201e] text-[#f8f3e7]"><BookOpen className="size-5" /></div>}<div><p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#777166]">Synchronized Reader</p><h1 className="font-serif text-lg font-medium">{title}</h1></div></div>
-      <div className="flex items-center gap-2"><span className="hidden text-xs text-[#756e65] lg:inline">{userName}</span><button onClick={handleGoHome} className="flex items-center gap-2 rounded-full border border-black/10 bg-white/60 px-3 py-2 text-sm hover:bg-white" aria-label="Voltar ao menu principal" title="Salvar e voltar ao menu"><Home className="size-4" /><span className="hidden sm:inline">Menu</span></button><button onClick={() => setSettingsOpen(!settingsOpen)} className="flex items-center gap-2 rounded-full border border-black/10 bg-white/60 px-3 py-2 text-sm hover:bg-white" aria-label="Text settings"><span className="font-serif font-bold">Aa</span><span className="hidden sm:inline">Reading settings</span><Settings2 className="size-4" /></button></div>
-      <AnimatePresence>{settingsOpen && <motion.section initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="absolute right-5 top-[68px] w-[310px] rounded-2xl border border-black/10 bg-[#faf9f6] p-5 shadow-xl md:right-10"><div className="mb-4 flex items-center justify-between"><h2 className="font-semibold">Reading settings</h2><button onClick={() => setSettingsOpen(false)}><X className="size-4" /></button></div><label className="mb-3 block text-xs font-semibold uppercase tracking-wider text-[#80796e]">Typeface<select value={font} onChange={e => setFont(e.target.value)} className="mt-1 w-full rounded-lg border border-black/10 bg-white p-2 text-sm"><option>Arial</option><option>Georgia</option><option>Verdana</option><option>Monospace</option></select></label><div className="mb-4 flex items-center justify-between"><span className="text-sm">Text size · {fontSize}px</span><div className="flex gap-1"><button onClick={() => setFontSize(v => Math.max(16, v - 1))} className="rounded-md border p-2"><Minus className="size-3" /></button><button onClick={() => setFontSize(v => Math.min(30, v + 1))} className="rounded-md border p-2"><Plus className="size-3" /></button></div></div><label className="mb-4 block text-xs font-semibold uppercase tracking-wider text-[#80796e]">Line spacing<select value={lineHeight} onChange={e => setLineHeight(Number(e.target.value))} className="mt-1 w-full rounded-lg border border-black/10 bg-white p-2 text-sm"><option value={1.5}>1.5</option><option value={1.7}>1.7</option><option value={2}>2.0</option><option value={2.2}>2.2</option></select></label><div className="mb-4"><p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[#80796e]">Theme</p><div className="grid grid-cols-3 gap-2">{[['sepia', 'Warm paper'], ['light', 'Pure light'], ['night', 'Dark night']].map(([id, label]) => <button key={id} onClick={() => setTheme(id)} className={`rounded-lg border p-2 text-xs ${theme === id ? 'border-[#0066ff] ring-1 ring-[#0066ff]' : ''}`}>{label}</button>)}</div></div><div><p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[#80796e]">Highlight</p><select value={highlight} onChange={e => setHighlight(e.target.value)} className="w-full rounded-lg border border-black/10 bg-white p-2 text-sm"><option value="blue">Blue highlight + bottom line</option><option value="underline">Blue underline only</option><option value="focus">Focus / karaoke mode</option></select></div></motion.section>}</AnimatePresence>
+      <div className="flex items-center gap-2">
+        <span className="hidden text-xs text-[#756e65] lg:inline">{userName}</span>
+        {pdfDoc && (
+          <button
+            onClick={() => setViewMode(viewMode === 'sheet' ? 'text' : 'sheet')}
+            className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+              viewMode === 'sheet'
+                ? 'border-library-accent/40 bg-white font-semibold shadow-xs'
+                : 'border-black/10 bg-white/60 hover:bg-white'
+            }`}
+            title={viewMode === 'sheet' ? 'Alternar para texto corrido ajustável' : 'Exibir folha real do livro com ilustrações'}
+          >
+            <FileText className="size-3.5" />
+            <span>{viewMode === 'sheet' ? 'Folha Real' : 'Texto'}</span>
+          </button>
+        )}
+        <button onClick={handleGoHome} className="flex items-center gap-2 rounded-full border border-black/10 bg-white/60 px-3 py-2 text-sm hover:bg-white" aria-label="Voltar ao menu principal" title="Salvar e voltar ao menu"><Home className="size-4" /><span className="hidden sm:inline">Menu</span></button>
+        <button onClick={() => setSettingsOpen(!settingsOpen)} className="flex items-center gap-2 rounded-full border border-black/10 bg-white/60 px-3 py-2 text-sm hover:bg-white" aria-label="Text settings"><span className="font-serif font-bold">Aa</span><span className="hidden sm:inline">Reading settings</span><Settings2 className="size-4" /></button>
+      </div>
+      <AnimatePresence>{settingsOpen && <motion.section initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="absolute right-5 top-[68px] w-[310px] rounded-2xl border border-black/10 bg-[#faf9f6] p-5 shadow-xl md:right-10"><div className="mb-4 flex items-center justify-between"><h2 className="font-semibold">Reading settings</h2><button onClick={() => setSettingsOpen(false)}><X className="size-4" /></button></div>{pdfDoc && (<div className="mb-4"><p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[#80796e]">Modo de visualização</p><div className="grid grid-cols-2 gap-2"><button onClick={() => setViewMode('sheet')} className={`rounded-lg border p-2 text-xs font-medium transition-all ${viewMode === 'sheet' ? 'border-[#0066ff] ring-1 ring-[#0066ff] bg-[#cce0ff]/30 text-[#003380] font-semibold' : 'hover:bg-black/5'}`}>📖 Folha Real (PDF)</button><button onClick={() => setViewMode('text')} className={`rounded-lg border p-2 text-xs font-medium transition-all ${viewMode === 'text' ? 'border-[#0066ff] ring-1 ring-[#0066ff] bg-[#cce0ff]/30 text-[#003380] font-semibold' : 'hover:bg-black/5'}`}>📝 Texto Corrido</button></div></div>)}<label className="mb-3 block text-xs font-semibold uppercase tracking-wider text-[#80796e]">Typeface<select value={font} onChange={e => setFont(e.target.value)} className="mt-1 w-full rounded-lg border border-black/10 bg-white p-2 text-sm"><option>Arial</option><option>Georgia</option><option>Verdana</option><option>Monospace</option></select></label><div className="mb-4 flex items-center justify-between"><span className="text-sm">Text size · {fontSize}px</span><div className="flex gap-1"><button onClick={() => setFontSize(v => Math.max(16, v - 1))} className="rounded-md border p-2"><Minus className="size-3" /></button><button onClick={() => setFontSize(v => Math.min(30, v + 1))} className="rounded-md border p-2"><Plus className="size-3" /></button></div></div><label className="mb-4 block text-xs font-semibold uppercase tracking-wider text-[#80796e]">Line spacing<select value={lineHeight} onChange={e => setLineHeight(Number(e.target.value))} className="mt-1 w-full rounded-lg border border-black/10 bg-white p-2 text-sm"><option value={1.5}>1.5</option><option value={1.7}>1.7</option><option value={2}>2.0</option><option value={2.2}>2.2</option></select></label><div className="mb-4"><p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[#80796e]">Theme</p><div className="grid grid-cols-3 gap-2">{[['sepia', 'Warm paper'], ['light', 'Pure light'], ['night', 'Dark night']].map(([id, label]) => <button key={id} onClick={() => setTheme(id)} className={`rounded-lg border p-2 text-xs ${theme === id ? 'border-[#0066ff] ring-1 ring-[#0066ff]' : ''}`}>{label}</button>)}</div></div><div><p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[#80796e]">Highlight</p><select value={highlight} onChange={e => setHighlight(e.target.value)} className="w-full rounded-lg border border-black/10 bg-white p-2 text-sm"><option value="blue">Blue highlight + bottom line</option><option value="underline">Blue underline only</option><option value="focus">Focus / karaoke mode</option></select></div></motion.section>}</AnimatePresence>
     </header>
     <div className="mx-auto flex max-w-[1280px] flex-col px-4 pb-36 pt-8 md:px-10 md:pt-12"><div className="mb-6 flex items-end justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#887f73]">Chapter 01</p><p className="mt-1 text-sm text-[#766f66]">{Math.round((active / Math.max(1, words.length - 1)) * 100)}% completed · {words.length.toLocaleString()} words</p></div><button onClick={() => setBookmarked(!bookmarked)} className="rounded-full border border-black/10 bg-white/50 p-2.5" aria-label="Bookmark page">{bookmarked ? <BookmarkCheck className="size-5 fill-[#20201e]" /> : <Bookmark className="size-5" />}</button></div>
-      <div className="relative mx-auto w-full max-w-[1220px] [perspective:2000px]"><div className="absolute -inset-x-5 bottom-[-18px] h-10 rounded-[50%] bg-black/20 blur-2xl" /><div className="relative grid min-h-[560px] grid-cols-1 overflow-hidden rounded-[4px] bg-[#b0a99e] p-2 shadow-2xl md:grid-cols-2 md:gap-[2px] md:p-3"><div className="pointer-events-none absolute inset-y-0 left-1/2 z-10 hidden w-8 -translate-x-1/2 bg-gradient-to-r from-transparent via-black/15 to-transparent md:block" /><AnimatePresence mode="wait"><motion.div key={flip} initial={{ rotateY: -88, opacity: 0.4 }} animate={{ rotateY: 0, opacity: 1 }} transition={{ duration: 0.7, ease: [0.22, 0.61, 0.36, 1] }} className="contents">{currentSpread.map((side, sideIndex) => <article key={sideIndex} className={`relative min-h-[550px] overflow-hidden p-7 shadow-[inset_0_0_28px_rgba(90,69,40,0.07)] sm:p-10 md:p-12 ${pageBg} ${sideIndex === 0 ? 'rounded-l-[2px] md:pr-14' : 'hidden rounded-r-[2px] md:block md:pl-14'}`} style={{ fontFamily: font === 'Monospace' ? 'monospace' : font, fontSize, lineHeight }}><div className={`absolute bottom-0 ${sideIndex === 0 ? 'left-0' : 'right-0'} top-0 w-4 bg-gradient-to-r from-black/10 to-transparent opacity-50`} /><div className={textColors}>{side.map(word => { const index = words.indexOf(word); const isActive = index === active; const dimmed = highlight === 'focus' && active !== index; return <span key={index} className={word.p.includes('\n\n') ? 'mb-[0.9em] block' : word.p.includes('\n') ? 'after:content-["\\A"] after:whitespace-pre' : ''}><button onClick={() => seek(index)} className={`mr-[0.25em] inline rounded-sm text-left transition-all duration-150 ${dimmed ? 'opacity-40' : ''} ${isActive ? (highlight === 'underline' ? 'border-b-[3px] border-[#0066ff] font-bold text-[#003380]' : 'bg-[#cce0ff] font-bold text-[#003380]') : ''}`} aria-label={`Seek to ${word.p.replace(/\n/g, '')}`}>{word.p.replace(/\n/g, '')}</button>{word.p.includes('\n\n') ? null : ' '}</span> })}</div><div className={`absolute bottom-5 ${sideIndex === 0 ? 'left-8' : 'right-8'} text-[10px] font-medium ${theme === 'night' ? 'text-white/30' : 'text-black/30'}`}>{page * 2 + sideIndex + 1}</div></article>)}</motion.div></AnimatePresence></div></div>
-      <div className="mx-auto mt-6 flex w-full max-w-[1120px] items-center justify-between text-xs text-[#766f66]"><button onClick={() => navigate(page - 1)} disabled={page === 0} className="flex items-center gap-1 rounded-full px-3 py-2 hover:bg-white/50 disabled:opacity-30"><ChevronLeft className="size-4" /> Previous spread</button><span>Page {page * 2 + 1}–{Math.min(page * 2 + 2, pages.length)} of {pages.length}</span><button onClick={() => navigate(page + 1)} disabled={page >= totalSpreads - 1} className="flex items-center gap-1 rounded-full px-3 py-2 hover:bg-white/50 disabled:opacity-30">Next spread <ChevronRight className="size-4" /></button></div>
+      <div className="relative mx-auto w-full max-w-[1220px] [perspective:2000px]"><div className="absolute -inset-x-5 bottom-[-18px] h-10 rounded-[50%] bg-black/20 blur-2xl" /><div className="relative grid min-h-[560px] grid-cols-1 overflow-hidden rounded-[4px] bg-[#b0a99e] p-2 shadow-2xl md:grid-cols-2 md:gap-[2px] md:p-3"><div className="pointer-events-none absolute inset-y-0 left-1/2 z-10 hidden w-8 -translate-x-1/2 bg-gradient-to-r from-transparent via-black/15 to-transparent md:block" /><AnimatePresence mode="wait"><motion.div key={`${flip}-${viewMode}`} initial={{ rotateY: -88, opacity: 0.4 }} animate={{ rotateY: 0, opacity: 1 }} transition={{ duration: 0.7, ease: [0.22, 0.61, 0.36, 1] }} className="contents">{isSheetMode && pdfDoc ? (<><PdfPageSheet pdfDoc={pdfDoc} pageNumber={page * 2 + 1} activeWordIndex={active} wordPositions={pdfWordPositions.get(page * 2 + 1) ?? []} onWordClick={seek} theme={theme as any} highlight={highlight} side="left" /><PdfPageSheet pdfDoc={pdfDoc} pageNumber={page * 2 + 2} activeWordIndex={active} wordPositions={pdfWordPositions.get(page * 2 + 2) ?? []} onWordClick={seek} theme={theme as any} highlight={highlight} side="right" /></>) : (currentSpread.map((side, sideIndex) => <article key={sideIndex} className={`relative min-h-[550px] overflow-hidden p-7 shadow-[inset_0_0_28px_rgba(90,69,40,0.07)] sm:p-10 md:p-12 ${pageBg} ${sideIndex === 0 ? 'rounded-l-[2px] md:pr-14' : 'hidden rounded-r-[2px] md:block md:pl-14'}`} style={{ fontFamily: font === 'Monospace' ? 'monospace' : font, fontSize, lineHeight }}><div className={`absolute bottom-0 ${sideIndex === 0 ? 'left-0' : 'right-0'} top-0 w-4 bg-gradient-to-r from-black/10 to-transparent opacity-50`} /><div className={textColors}>{side.map(word => { const index = words.indexOf(word); const isActive = index === active; const dimmed = highlight === 'focus' && active !== index; return <span key={index} className={word.p.includes('\n\n') ? 'mb-[0.9em] block' : word.p.includes('\n') ? 'after:content-["\\A"] after:whitespace-pre' : ''}><button onClick={() => seek(index)} className={`mr-[0.25em] inline rounded-sm text-left transition-all duration-150 ${dimmed ? 'opacity-40' : ''} ${isActive ? (highlight === 'underline' ? 'border-b-[3px] border-[#0066ff] font-bold text-[#003380]' : 'bg-[#cce0ff] font-bold text-[#003380]') : ''}`} aria-label={`Seek to ${word.p.replace(/\n/g, '')}`}>{word.p.replace(/\n/g, '')}</button>{word.p.includes('\n\n') ? null : ' '}</span> })}</div><div className={`absolute bottom-5 ${sideIndex === 0 ? 'left-8' : 'right-8'} text-[10px] font-medium ${theme === 'night' ? 'text-white/30' : 'text-black/30'}`}>{page * 2 + sideIndex + 1}</div></article>))}</motion.div></AnimatePresence></div></div>
+      <div className="mx-auto mt-6 flex w-full max-w-[1120px] items-center justify-between text-xs text-[#766f66]"><button onClick={() => navigate(page - 1)} disabled={page === 0} className="flex items-center gap-1 rounded-full px-3 py-2 hover:bg-white/50 disabled:opacity-30"><ChevronLeft className="size-4" /> Anterior</button><span>Página {page * 2 + 1}–{Math.min(page * 2 + 2, isSheetMode && pdfDoc ? pdfDoc.numPages : pages.length)} de {isSheetMode && pdfDoc ? pdfDoc.numPages : pages.length}</span><button onClick={() => navigate(page + 1)} disabled={page >= totalSpreads - 1} className="flex items-center gap-1 rounded-full px-3 py-2 hover:bg-white/50 disabled:opacity-30">Próxima <ChevronRight className="size-4" /></button></div>
     </div>
     <footer className="fixed bottom-5 left-1/2 z-30 flex w-[calc(100%-24px)] max-w-[920px] -translate-x-1/2 items-center gap-3 rounded-2xl border border-white/60 bg-[#252522]/95 px-4 py-3 text-white shadow-2xl backdrop-blur-xl md:gap-5 md:px-6"><button onClick={() => { const t = Math.max(0, time - 10); if (audioRef.current) audioRef.current.currentTime = t; setTime(t) }} className="hidden text-white/60 hover:text-white sm:block"><SkipBack className="size-4" /></button><button onClick={() => void togglePlayback()} disabled={!audioUrl} className="flex size-10 shrink-0 items-center justify-center rounded-full bg-white text-[#252522] hover:bg-[#dfe9ff] disabled:cursor-not-allowed disabled:opacity-50" aria-label={playing ? 'Pause' : 'Play'} title={audioUrl ? (playing ? 'Pause' : 'Play') : 'Load an audio file first'}>{playing ? <Pause className="size-4 fill-current" /> : <Play className="ml-0.5 size-4 fill-current" />}</button><button onClick={() => { const t = Math.min(duration, time + 10); if (audioRef.current) audioRef.current.currentTime = t; setTime(t) }} className="hidden text-white/60 hover:text-white sm:block"><SkipForward className="size-4" /></button><div className="min-w-0 flex-1"><div className="mb-1 flex justify-between text-[10px] text-white/50"><span>{Math.floor(time / 60)}:{String(Math.floor(time % 60)).padStart(2, '0')}</span><span>{Math.floor(duration / 60)}:{String(Math.floor(duration % 60)).padStart(2, '0')}</span></div><input aria-label="Audio progress" type="range" min="0" max={duration} step="0.01" value={time} onChange={e => { const t = Number(e.target.value); if (audioRef.current) audioRef.current.currentTime = t; saveProgress(t); setActive(findWord(words, t)) }} className="h-1 w-full accent-[#8db7ff]" /></div><select value={speed} onChange={e => setSpeed(Number(e.target.value))} className="hidden rounded-md border border-white/15 bg-white/10 px-2 py-1 text-xs sm:block"><option value={0.75}>0.75x</option><option value={1}>1x</option><option value={1.25}>1.25x</option><option value={1.5}>1.5x</option><option value={2}>2x</option></select><span className="hidden whitespace-nowrap text-xs text-white/60 md:block">{page + 1} / {totalSpreads}</span></footer>
     {uploadOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm"><section className="w-full max-w-md rounded-2xl bg-[#faf9f6] p-6 shadow-2xl"><div className="mb-6 flex items-start justify-between"><div><h2 className="text-xl font-semibold">Load your audiobook</h2><p className="mt-1 text-sm text-[#756e65]">Pair audio with word-level timestamps.</p></div><button onClick={() => setUploadOpen(false)}><X className="size-5" /></button></div><div className="grid gap-3"><label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-black/20 p-4 hover:bg-white"><FileAudio className="size-5" /><span className="flex-1 text-sm">Audio file <small className="block text-[#867d72]">MP3, WAV, M4A</small></span><input type="file" accept="audio/*" className="sr-only" onChange={e => { const file = e.target.files?.[0]; if (file) selectAudio(file) }} /></label><label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-black/20 p-4 hover:bg-white"><FileJson className="size-5" /><span className="flex-1 text-sm">Word boundaries <small className="block text-[#867d72]">JSON array with p, i, f</small></span><input type="file" accept="application/json,.json" className="sr-only" onChange={e => { const file = e.target.files?.[0]; if (file) selectJson(file).catch(() => { }) }} /></label></div><button onClick={loadDemo} className="mt-5 w-full rounded-xl bg-[#20201e] px-4 py-3 text-sm font-medium text-white hover:bg-black">Load demo book</button></section></div>}
