@@ -386,33 +386,35 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/35 backdrop-blur-[2px] transition-opacity data-ending-style:opacity-0 data-starting-style:opacity-0" />
-        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 max-h-[min(90dvh,46rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-library-border bg-library-surface p-5 text-library-ink shadow-2xl outline-none sm:p-7">
+        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm transition-opacity data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 max-h-[min(90dvh,48rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-library-border bg-library-surface p-6 text-library-ink shadow-2xl outline-none sm:p-8">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <Dialog.Title className="font-display text-2xl font-semibold tracking-tight">Adicionar livro</Dialog.Title>
-              <Dialog.Description className="mt-2 max-w-md text-sm leading-6 text-library-muted">
-                Converta documentos com IA (Edge-TTS) ou faça upload de arquivos já sincronizados.
+              <Dialog.Title className="font-brand text-2xl font-medium tracking-tight text-library-ink">
+                Adicionar livro
+              </Dialog.Title>
+              <Dialog.Description className="mt-1.5 max-w-md text-xs sm:text-sm leading-relaxed text-library-muted">
+                Sintetize voz sincronizada via IA (Edge-TTS) ou envie arquivos já preparados.
               </Dialog.Description>
             </div>
             <Dialog.Close
               aria-label="Fechar diálogo"
               disabled={busy}
-              className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-library-muted transition-colors hover:bg-library-selected hover:text-library-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-library-accent disabled:opacity-50"
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-library-border/50 text-library-muted transition-colors hover:bg-library-selected hover:text-library-ink focus-visible:outline-2 focus-visible:outline-library-accent disabled:opacity-50"
             >
-              <X aria-hidden="true" className="size-5" />
+              <X aria-hidden="true" className="size-4" />
             </Dialog.Close>
           </div>
 
           {/* Seletor de Modo (Abas) */}
-          <div className="mt-5 grid grid-cols-2 rounded-xl bg-library-selected/70 p-1 text-sm font-medium">
+          <div className="mt-5 grid grid-cols-2 rounded-xl border border-library-border/60 bg-library-page/60 p-1 text-xs sm:text-sm font-medium">
             <button
               type="button"
               disabled={busy}
               onClick={() => { setMode('ai'); setFieldError(''); setError('') }}
-              className={`flex items-center justify-center gap-2 rounded-lg py-2 transition-all ${
+              className={`flex items-center justify-center gap-2 rounded-lg py-2 transition-all duration-150 ${
                 mode === 'ai'
-                  ? 'bg-library-surface text-library-ink shadow-sm'
+                  ? 'border border-library-accent/30 bg-library-selected text-library-ink shadow-xs font-semibold'
                   : 'text-library-muted hover:text-library-ink'
               }`}
             >
@@ -423,9 +425,9 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
               type="button"
               disabled={busy}
               onClick={() => { setMode('manual'); setFieldError(''); setError('') }}
-              className={`flex items-center justify-center gap-2 rounded-lg py-2 transition-all ${
+              className={`flex items-center justify-center gap-2 rounded-lg py-2 transition-all duration-150 ${
                 mode === 'manual'
-                  ? 'bg-library-surface text-library-ink shadow-sm'
+                  ? 'border border-library-accent/30 bg-library-selected text-library-ink shadow-xs font-semibold'
                   : 'text-library-muted hover:text-library-ink'
               }`}
             >
@@ -672,8 +674,10 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                 <p className="text-sm font-medium">Já existe “{conflict.name}”.</p>
                 <p className="mt-1 text-sm text-library-muted">Substituirá os arquivos e manterá a posição de leitura.</p>
                 <div className="mt-3 flex flex-wrap justify-end gap-2">
-                  <Button type="button" variant="outline" className="h-11" disabled={busy} onClick={() => setConflict(null)}>Cancelar</Button>
-                  <Button type="button" disabled={busy} className="h-11 bg-library-ink text-library-surface hover:bg-library-ink/90" onClick={() => void submit(true)}>
+                  <Button type="button" variant="outline" className="h-10 rounded-xl" disabled={busy} onClick={() => setConflict(null)}>
+                    Cancelar
+                  </Button>
+                  <Button type="button" disabled={busy} className="h-10 rounded-xl bg-library-ink text-library-surface hover:bg-library-ink/90 font-medium" onClick={() => void submit(true)}>
                     {busy && <Loader2 className="size-4 animate-spin" />}
                     {busy ? (uploadStatus || 'Enviando…') : 'Substituir livro'}
                   </Button>
@@ -690,7 +694,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                   (mode === 'manual' && (!audio || !wordMap)) ||
                   (!title.trim() && !docFile && !wordMap)
                 }
-                className="h-11 w-full bg-library-accent text-library-accent-foreground hover:bg-library-accent/90"
+                className="h-11 w-full rounded-xl bg-library-accent font-semibold text-library-accent-foreground shadow-sm transition-all hover:bg-library-accent/90 active:scale-[0.98] disabled:opacity-50"
               >
                 {busy ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -699,11 +703,13 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                 ) : (
                   <Upload aria-hidden="true" className="size-4" />
                 )}
-                {busy
-                  ? uploadStatus || 'Processando…'
-                  : mode === 'ai'
-                  ? 'Gerar Audiolivro com IA'
-                  : 'Adicionar livro'}
+                <span>
+                  {busy
+                    ? uploadStatus || 'Processando…'
+                    : mode === 'ai'
+                    ? 'Gerar Audiolivro com IA'
+                    : 'Adicionar à biblioteca'}
+                </span>
               </Button>
             )}
           </form>
