@@ -179,4 +179,48 @@
     transform: translateY(-4px);
     box-shadow: 0 16px 32px -8px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(224, 172, 92, 0.25);
   }
+
+  /* 3D Realistic Open Book Styling */
+  .book-3d-hardcover {
+    background: linear-gradient(135deg, #181512 0%, #25211c 45%, #151310 100%);
+    box-shadow:
+      0 40px 80px -15px rgba(0, 0, 0, 0.9),
+      0 20px 40px -20px rgba(0, 0, 0, 0.8),
+      0 0 0 1px rgba(224, 172, 92, 0.15),
+      /* Page stack simulation (layered fore-edges) */
+      0 3px 0 1px #221f1b,
+      0 6px 0 2px #d8d2c5,
+      0 8px 0 3px #201d19,
+      0 11px 0 4px #cfc8bb,
+      0 13px 0 5px #191714,
+      0 16px 0 6px #c4bcad;
+  }
+  .book-spine-shadow-3d {
+    background: linear-gradient(
+      to right,
+      rgba(0, 0, 0, 0) 0%,
+      rgba(0, 0, 0, 0.08) 25%,
+      rgba(0, 0, 0, 0.32) 46%,
+      rgba(0, 0, 0, 0.5) 50%,
+      rgba(0, 0, 0, 0.32) 54%,
+      rgba(0, 0, 0, 0.08) 75%,
+      rgba(0, 0, 0, 0) 100%
+    );
+  }
+  .book-page-curve-left {
+    box-shadow:
+      inset -18px 0 24px -10px rgba(0, 0, 0, 0.22),
+      inset 0 0 35px rgba(90, 69, 40, 0.05);
+  }
+  .book-page-curve-right {
+    box-shadow:
+      inset 18px 0 24px -10px rgba(0, 0, 0, 0.22),
+      inset 0 0 35px rgba(90, 69, 40, 0.05);
+  }
+  .book-ambient-glow {
+    background: radial-gradient(circle at 50% 35%, rgba(224, 159, 76, 0.1) 0%, rgba(11, 17, 23, 0) 70%);
+  }
+  .safe-area-bottom {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom, 1rem));
+  }
 }

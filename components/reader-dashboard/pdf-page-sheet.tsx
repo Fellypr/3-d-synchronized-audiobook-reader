@@ -13,6 +13,7 @@ type PdfPageSheetProps = {
   theme: 'sepia' | 'light' | 'night'
   highlight: string
   side: 'left' | 'right'
+  isMobileActive?: boolean
 }
 
 export function PdfPageSheet({
@@ -24,6 +25,7 @@ export function PdfPageSheet({
   theme,
   highlight,
   side,
+  isMobileActive,
 }: PdfPageSheetProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -33,7 +35,7 @@ export function PdfPageSheet({
 
   const isOutOfRange = pageNumber < 1 || pageNumber > pdfDoc.numPages
 
-  // Re-render when container dimensions change (e.g. window resize or sidebar toggle)
+  // Re-render when container dimensions change
   useEffect(() => {
     const container = containerRef.current
     if (!container || typeof ResizeObserver === 'undefined') return
@@ -72,9 +74,9 @@ export function PdfPageSheet({
         const container = containerRef.current
         if (!canvas || !container) return
 
-        // Compute scale to fit both container width (accounting for book padding) and standard spread max height
+        // Compute scale to fit container width and viewport max height
         const availableWidth = Math.max(260, (container.clientWidth || 520) - 16)
-        const maxHeight = 710
+        const maxHeight = typeof window !== 'undefined' ? Math.min(760, Math.max(480, window.innerHeight - 220)) : 710
         const scale = Math.min(
           availableWidth / unscaledViewport.width,
           maxHeight / unscaledViewport.height
@@ -95,8 +97,8 @@ export function PdfPageSheet({
         const context = canvas.getContext('2d')
         if (!context) return
 
-        // Explicitly fill white sheet background to prevent black letterboxing
-        context.fillStyle = '#ffffff'
+        // Explicitly fill sheet background according to theme to prevent black flashes
+        context.fillStyle = theme === 'night' ? '#141519' : theme === 'sepia' ? '#f6f0e4' : '#fcfbf7'
         context.fillRect(0, 0, canvas.width, canvas.height)
 
         context.imageSmoothingEnabled = true
@@ -132,27 +134,37 @@ export function PdfPageSheet({
         } catch {}
       }
     }
-  }, [pdfDoc, pageNumber, isOutOfRange, resizeCount])
+  }, [pdfDoc, pageNumber, isOutOfRange, resizeCount, theme])
 
   // Theme filters applied directly to the canvas so illustrations fit the book theme
   const canvasThemeFilter =
     theme === 'night'
-      ? 'invert(0.92) hue-rotate(180deg) brightness(0.95) contrast(0.9)'
+      ? 'invert(0.92) hue-rotate(180deg) brightness(0.92) contrast(0.95)'
       : theme === 'sepia'
-      ? 'sepia(0.22) contrast(1.02)'
+      ? 'sepia(0.2) contrast(1.02)'
       : 'none'
 
   const pageBg =
-    theme === 'night' ? 'bg-[#181a1b]' : theme === 'light' ? 'bg-white' : 'bg-[#fbf8f1]'
+    theme === 'night' ? 'bg-[#141519]' : theme === 'light' ? 'bg-[#fcfbf7]' : 'bg-[#f6f0e4]'
+
+  const curveClass =
+    side === 'left' ? 'book-page-curve-left rounded-l-sm' : 'book-page-curve-right rounded-r-sm'
+
+  const mobileVisibilityClass =
+    isMobileActive !== undefined
+      ? isMobileActive
+        ? 'block'
+        : 'hidden md:block'
+      : side === 'left'
+      ? 'block'
+      : 'hidden md:block'
 
   if (isOutOfRange) {
     return (
       <article
-        className={`relative flex min-h-[550px] items-center justify-center p-8 ${pageBg} ${
-          side === 'left' ? 'rounded-l-[2px]' : 'rounded-r-[2px]'
-        }`}
+        className={`relative flex min-h-[460px] md:min-h-[580px] items-center justify-center p-8 ${pageBg} ${curveClass} ${mobileVisibilityClass}`}
       >
-        <span className="text-xs uppercase tracking-widest text-black/20 dark:text-white/20">
+        <span className="text-xs uppercase tracking-widest text-black/30 dark:text-white/20 font-serif">
           Fim do Livro
         </span>
       </article>
@@ -162,21 +174,21 @@ export function PdfPageSheet({
   return (
     <article
       ref={containerRef}
-      className={`relative min-h-[550px] overflow-hidden p-3 sm:p-5 shadow-[inset_0_0_24px_rgba(90,69,40,0.06)] ${pageBg} ${
-        side === 'left' ? 'rounded-l-[2px] md:pr-7' : 'hidden md:block rounded-r-[2px] md:pl-7'
+      className={`relative min-h-[460px] md:min-h-[580px] overflow-hidden p-2.5 sm:p-4 md:p-6 shadow-[inset_0_0_24px_rgba(90,69,40,0.06)] ${pageBg} ${curveClass} ${mobileVisibilityClass} ${
+        side === 'left' ? 'md:pr-8' : 'md:pl-8'
       }`}
     >
-      {/* Sombra da lombada do livro */}
+      {/* Sombra suave interna da lombada */}
       <div
         className={`pointer-events-none absolute bottom-0 ${
           side === 'left' ? 'right-0 bg-gradient-to-l' : 'left-0 bg-gradient-to-r'
-        } top-0 z-20 w-5 from-black/10 to-transparent opacity-60`}
+        } top-0 z-20 w-6 from-black/15 to-transparent opacity-70`}
       />
 
       {/* Loading placeholder */}
       {loading && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/5 backdrop-blur-[1px]">
-          <div className="size-6 animate-spin rounded-full border-2 border-black/20 border-t-black/70" />
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/10 backdrop-blur-[2px]">
+          <div className="size-7 animate-spin rounded-full border-2 border-amber-500/30 border-t-amber-500" />
         </div>
       )}
 
@@ -208,14 +220,14 @@ export function PdfPageSheet({
             if (isActive) {
               if (highlight === 'underline') {
                 highlightClasses =
-                  'border-b-[3px] border-blue-600 bg-blue-500/15 ring-1 ring-blue-500/30'
+                  'border-b-[3px] border-amber-500 bg-amber-500/15 ring-1 ring-amber-500/30'
               } else if (highlight === 'focus') {
                 highlightClasses =
-                  'bg-blue-600/35 ring-2 ring-blue-600 shadow-md scale-105 z-10'
+                  'bg-amber-500/35 ring-2 ring-amber-400 shadow-lg scale-105 z-10'
               } else {
                 // blue default
                 highlightClasses =
-                  'bg-blue-500/25 ring-2 ring-blue-500/40 rounded-sm shadow-sm'
+                  'bg-sky-500/25 ring-2 ring-sky-400/50 rounded-sm shadow-sm'
               }
             }
 
@@ -225,7 +237,7 @@ export function PdfPageSheet({
                 type="button"
                 onClick={() => onWordClick(pos.wordIndex)}
                 title={pos.text}
-                className={`absolute cursor-pointer transition-all duration-100 hover:bg-blue-500/15 ${highlightClasses}`}
+                className={`absolute cursor-pointer transition-all duration-100 hover:bg-amber-500/15 ${highlightClasses}`}
                 style={{
                   left: `${pos.leftPercent}%`,
                   top: `${pos.topPercent}%`,
@@ -241,9 +253,9 @@ export function PdfPageSheet({
 
       {/* Número da página real no rodapé */}
       <div
-        className={`absolute bottom-3 ${
-          side === 'left' ? 'left-6' : 'right-6'
-        } text-[11px] font-medium tracking-wider ${
+        className={`absolute bottom-2.5 sm:bottom-4 ${
+          side === 'left' ? 'left-4 sm:left-6' : 'right-4 sm:right-6'
+        } text-[10px] sm:text-[11px] font-medium tracking-wider ${
           theme === 'night' ? 'text-white/40' : 'text-black/40'
         }`}
       >
