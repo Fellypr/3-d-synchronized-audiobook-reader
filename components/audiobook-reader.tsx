@@ -78,6 +78,7 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
   const [pdfPageRanges, setPdfPageRanges] = useState<PageWordRange[]>([])
   const [pdfWordPositions, setPdfWordPositions] = useState<Map<number, WordPosition[]>>(new Map())
   const [viewMode, setViewMode] = useState<'sheet' | 'text'>('sheet')
+  const [pdfZoom, setPdfZoom] = useState<number>(1.0)
   const [audioReady, setAudioReady] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [resumePrompt, setResumePrompt] = useState<number | null>(null)
@@ -305,6 +306,7 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
         fontSize?: number
         font?: string
         speed?: number
+        pdfZoom?: number
       }
       const savedListeningValue = localStorage.getItem(listenedSecondsKey)
       if (savedListeningValue !== null) {
@@ -320,6 +322,7 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
       if (typeof savedSettings.fontSize === 'number') setFontSize(Math.min(30, Math.max(16, savedSettings.fontSize)))
       if (typeof savedSettings.font === 'string') setFont(savedSettings.font)
       if (typeof savedSettings.speed === 'number') setSpeed(savedSettings.speed)
+      if (typeof savedSettings.pdfZoom === 'number') setPdfZoom(savedSettings.pdfZoom)
       if (savedProgress > 0 && savedProgress < duration) setResumePrompt(savedProgress)
     } catch {}
   }, [bookKey, duration, listenedSecondsKey, progressKey, settingsKey])
@@ -334,9 +337,9 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
   useEffect(() => {
     if (!storageHydratedRef.current) return
     try {
-      localStorage.setItem(settingsKey, JSON.stringify({ theme, fontSize, font, speed }))
+      localStorage.setItem(settingsKey, JSON.stringify({ theme, fontSize, font, speed, pdfZoom }))
     } catch {}
-  }, [font, fontSize, settingsKey, speed, theme])
+  }, [font, fontSize, pdfZoom, settingsKey, speed, theme])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -837,6 +840,33 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
                   </div>
                 )}
 
+                {pdfDoc && viewMode === 'sheet' && (
+                  <div className="mb-4">
+                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-400/80">
+                      Preenchimento da Folha
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        [1.0, 'Original'],
+                        [1.12, 'Preenchido'],
+                        [1.25, 'Ampliado'],
+                      ].map(([val, label]) => (
+                        <button
+                          key={String(val)}
+                          onClick={() => setPdfZoom(Number(val))}
+                          className={`rounded-xl border p-2 text-xs transition-all ${
+                            pdfZoom === val
+                              ? 'border-amber-500/50 bg-amber-500/20 text-amber-300 font-semibold'
+                              : 'border-white/10 bg-white/5 text-[#c8d0dc] hover:bg-white/10'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <label className="mb-3 block text-[10px] font-semibold uppercase tracking-wider text-amber-400/80">
                   Tipografia
                   <select
@@ -956,7 +986,7 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
             <div className="pointer-events-none absolute inset-y-0 left-1/2 z-20 hidden w-12 -translate-x-1/2 book-spine-shadow-3d md:block" />
 
             {/* Book Body (Spread on Desktop, Active Single Page on Mobile) */}
-            <div className="grid min-h-[460px] sm:min-h-[520px] md:min-h-[580px] grid-cols-1 overflow-hidden rounded-[3px] md:grid-cols-2 md:gap-[2px]">
+            <div className="grid min-h-[540px] sm:min-h-[640px] md:min-h-[760px] grid-cols-1 overflow-hidden rounded-[3px] md:grid-cols-2 md:gap-[2px]">
               <AnimatePresence mode="wait">
                 <motion.div
                   key={`${flip}-${viewMode}`}
@@ -977,6 +1007,7 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
                         highlight={highlight}
                         side="left"
                         isMobileActive={!isMobileRightPage}
+                        zoom={pdfZoom}
                       />
                       <PdfPageSheet
                         pdfDoc={pdfDoc}
@@ -988,6 +1019,7 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
                         highlight={highlight}
                         side="right"
                         isMobileActive={isMobileRightPage}
+                        zoom={pdfZoom}
                       />
                     </>
                   ) : (
@@ -997,7 +1029,7 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
                       return (
                         <article
                           key={sideIndex}
-                          className={`relative min-h-[460px] sm:min-h-[520px] md:min-h-[580px] overflow-hidden p-5 sm:p-8 md:p-12 ${pageBg} ${
+                          className={`relative min-h-[540px] sm:min-h-[640px] md:min-h-[760px] overflow-hidden p-6 sm:p-8 md:p-12 ${pageBg} ${
                             isRight
                               ? 'book-page-curve-right rounded-r-[2px] md:pl-12'
                               : 'book-page-curve-left rounded-l-[2px] md:pr-12'
@@ -1068,7 +1100,7 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
         </div>
 
         {/* Page Switcher Bar */}
-        <div className="mx-auto mt-4 sm:mt-6 flex w-full max-w-[1120px] items-center justify-between text-xs text-[#9aa6b6]">
+        <div className="mx-auto mt-3 sm:mt-5 mb-2 flex w-full max-w-[1120px] items-center justify-between text-xs text-[#9aa6b6]">
           <button
             onClick={() => navigate(page - 1)}
             disabled={page === 0}

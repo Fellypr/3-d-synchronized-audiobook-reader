@@ -14,6 +14,7 @@ type PdfPageSheetProps = {
   highlight: string
   side: 'left' | 'right'
   isMobileActive?: boolean
+  zoom?: number
 }
 
 export function PdfPageSheet({
@@ -26,6 +27,7 @@ export function PdfPageSheet({
   highlight,
   side,
   isMobileActive,
+  zoom = 1.12,
 }: PdfPageSheetProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -45,7 +47,7 @@ export function PdfPageSheet({
       clearTimeout(timeoutId)
       timeoutId = setTimeout(() => {
         setResizeCount((c) => c + 1)
-      }, 200)
+      }, 150)
     })
     observer.observe(container)
     return () => {
@@ -74,13 +76,16 @@ export function PdfPageSheet({
         const container = containerRef.current
         if (!canvas || !container) return
 
-        // Compute scale to fit container width and viewport max height
-        const availableWidth = Math.max(260, (container.clientWidth || 520) - 16)
-        const maxHeight = typeof window !== 'undefined' ? Math.min(760, Math.max(480, window.innerHeight - 220)) : 710
-        const scale = Math.min(
-          availableWidth / unscaledViewport.width,
-          maxHeight / unscaledViewport.height
+        // Compute scale so the PDF fills the sheet without ever cutting off text
+        const containerWidth = container.clientWidth || 540
+        const containerHeight = container.clientHeight || 720
+
+        const baseScale = Math.min(
+          containerWidth / unscaledViewport.width,
+          containerHeight / unscaledViewport.height
         )
+        const zoomFactor = Math.max(0.85, Math.min(1.5, zoom || 1.0))
+        const scale = baseScale * zoomFactor
         const viewport = page.getViewport({ scale })
 
         const displayWidth = Math.floor(viewport.width)
@@ -97,8 +102,8 @@ export function PdfPageSheet({
         const context = canvas.getContext('2d')
         if (!context) return
 
-        // Explicitly fill sheet background according to theme to prevent black flashes
-        context.fillStyle = theme === 'night' ? '#141519' : theme === 'sepia' ? '#f6f0e4' : '#fcfbf7'
+        // Fill background according to book theme
+        context.fillStyle = theme === 'night' ? '#141519' : theme === 'sepia' ? '#f6f0e4' : '#ffffff'
         context.fillRect(0, 0, canvas.width, canvas.height)
 
         context.imageSmoothingEnabled = true
@@ -134,7 +139,7 @@ export function PdfPageSheet({
         } catch {}
       }
     }
-  }, [pdfDoc, pageNumber, isOutOfRange, resizeCount, theme])
+  }, [pdfDoc, pageNumber, isOutOfRange, resizeCount, theme, zoom])
 
   // Theme filters applied directly to the canvas so illustrations fit the book theme
   const canvasThemeFilter =
@@ -145,7 +150,7 @@ export function PdfPageSheet({
       : 'none'
 
   const pageBg =
-    theme === 'night' ? 'bg-[#141519]' : theme === 'light' ? 'bg-[#fcfbf7]' : 'bg-[#f6f0e4]'
+    theme === 'night' ? 'bg-[#141519]' : theme === 'light' ? 'bg-white' : 'bg-[#f6f0e4]'
 
   const curveClass =
     side === 'left' ? 'book-page-curve-left rounded-l-sm' : 'book-page-curve-right rounded-r-sm'
@@ -162,7 +167,7 @@ export function PdfPageSheet({
   if (isOutOfRange) {
     return (
       <article
-        className={`relative flex min-h-[460px] md:min-h-[580px] items-center justify-center p-8 ${pageBg} ${curveClass} ${mobileVisibilityClass}`}
+        className={`relative flex h-full w-full items-center justify-center p-8 ${pageBg} ${curveClass} ${mobileVisibilityClass}`}
       >
         <span className="text-xs uppercase tracking-widest text-black/30 dark:text-white/20 font-serif">
           Fim do Livro
@@ -174,11 +179,9 @@ export function PdfPageSheet({
   return (
     <article
       ref={containerRef}
-      className={`relative min-h-[460px] md:min-h-[580px] overflow-hidden p-2.5 sm:p-4 md:p-6 shadow-[inset_0_0_24px_rgba(90,69,40,0.06)] ${pageBg} ${curveClass} ${mobileVisibilityClass} ${
-        side === 'left' ? 'md:pr-8' : 'md:pl-8'
-      }`}
+      className={`relative min-h-[540px] sm:min-h-[640px] md:min-h-[760px] h-full w-full overflow-hidden flex items-center justify-center ${pageBg} ${curveClass} ${mobileVisibilityClass}`}
     >
-      {/* Sombra suave interna da lombada */}
+      {/* Sombra suave interna da lombada na borda interna da folha */}
       <div
         className={`pointer-events-none absolute bottom-0 ${
           side === 'left' ? 'right-0 bg-gradient-to-l' : 'left-0 bg-gradient-to-r'
@@ -188,27 +191,26 @@ export function PdfPageSheet({
       {/* Loading placeholder */}
       {loading && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/10 backdrop-blur-[2px]">
-          <div className="size-7 animate-spin rounded-full border-2 border-amber-500/30 border-t-amber-500" />
+          <div className="size-8 animate-spin rounded-full border-2 border-amber-500/30 border-t-amber-500" />
         </div>
       )}
 
-      {/* Conteúdo visual da folha real com ilustrações */}
+      {/* Conteúdo visual da folha real com preenchimento total e ilustrações */}
       <div
-        className="relative mx-auto flex items-center justify-center"
+        className="relative flex items-center justify-center shrink-0 transition-transform duration-200"
         style={{
           width: pageDimensions ? `${pageDimensions.width}px` : '100%',
-          height: pageDimensions ? `${pageDimensions.height}px` : 'auto',
-          maxWidth: '100%',
+          height: pageDimensions ? `${pageDimensions.height}px` : '100%',
         }}
       >
         <canvas
           ref={canvasRef}
           style={{
             width: pageDimensions ? `${pageDimensions.width}px` : '100%',
-            height: pageDimensions ? `${pageDimensions.height}px` : 'auto',
+            height: pageDimensions ? `${pageDimensions.height}px` : '100%',
             filter: canvasThemeFilter,
           }}
-          className="block rounded-[2px] shadow-sm transition-[filter] duration-200"
+          className="block transition-[filter] duration-200"
         />
 
         {/* Camada interativa de sincronização de palavras sobre o Canvas */}
@@ -249,17 +251,6 @@ export function PdfPageSheet({
             )
           })}
         </div>
-      </div>
-
-      {/* Número da página real no rodapé */}
-      <div
-        className={`absolute bottom-2.5 sm:bottom-4 ${
-          side === 'left' ? 'left-4 sm:left-6' : 'right-4 sm:right-6'
-        } text-[10px] sm:text-[11px] font-medium tracking-wider ${
-          theme === 'night' ? 'text-white/40' : 'text-black/40'
-        }`}
-      >
-        {pageNumber}
       </div>
     </article>
   )
