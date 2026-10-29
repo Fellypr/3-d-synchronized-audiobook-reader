@@ -1,19 +1,20 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Dialog } from '@base-ui/react/dialog'
 import {
   FileAudio2,
   FileJson2,
   Upload,
   X,
-  Loader2,
   Type,
   Image as ImageIcon,
   Sparkles,
   FileText,
   Mic,
   Gauge,
+  Terminal,
+  SlidersHorizontal,
 } from 'lucide-react'
 import { upload } from '@vercel/blob/client'
 import { useSession } from '@/lib/auth-client'
@@ -31,6 +32,13 @@ type UploadBookDialogProps = {
 type ExistingBook = { id: string; name: string }
 
 type UploadMode = 'ai' | 'manual'
+
+type TerminalLog = {
+  id: string
+  tempo: string
+  nivel: string
+  mensagem: string
+}
 
 const VOZES_DISPONIVEIS = [
   { id: 'pt-BR-AntonioNeural', nome: 'Antônio (Masculino - Natural/Expressivo)' },
@@ -93,6 +101,14 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   const [selectedVoice, setSelectedVoice] = useState('pt-BR-AntonioNeural')
   const [selectedRate, setSelectedRate] = useState('+0%')
   const [headerFilter, setHeaderFilter] = useState('')
+  const [apiUrl, setApiUrl] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('audiobook_api_url')
+      if (saved) return saved
+    }
+    return process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'https://api-edge-tts.onrender.com'
+  })
+  const [showApiConfig, setShowApiConfig] = useState(false)
 
   // Campos compartilhados
   const [title, setTitle] = useState('')
@@ -101,10 +117,33 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   const [busy, setBusy] = useState(false)
   const [uploadStatus, setUploadStatus] = useState('')
   const [uploadProgress, setUploadProgress] = useState(0)
+  const [logs, setLogs] = useState<TerminalLog[]>([])
   const [error, setError] = useState('')
   const [fieldError, setFieldError] = useState('')
   const [conflict, setConflict] = useState<ExistingBook | null>(null)
+
   const pendingFilesRef = useRef<{ audio: File; json: File; pdf?: File; name: string } | null>(null)
+  const terminalLogsRef = useRef<HTMLDivElement>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
+
+  // Auto-scroll do painel de logs estilo terminal sempre que novas linhas chegam
+  useEffect(() => {
+    if (terminalLogsRef.current) {
+      terminalLogsRef.current.scrollTop = terminalLogsRef.current.scrollHeight
+    }
+  }, [logs])
+
+  function addLog(mensagem: string, nivel: string = 'INFO') {
+    setLogs((prev) => [
+      ...prev,
+      {
+        id: Math.random().toString(36).slice(2),
+        tempo: new Date().toLocaleTimeString('pt-BR'),
+        nivel,
+        mensagem,
+      },
+    ])
+  }
 
   function setAudioFile(file?: File) {
     setAudio(file ?? null)
@@ -137,6 +176,10 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   }
 
   function resetAndClose() {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
     setAudio(null)
     setWordMap(null)
     setManualPdf(null)
@@ -150,6 +193,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     setFieldError('')
     setUploadStatus('')
     setUploadProgress(0)
+    setLogs([])
     pendingFilesRef.current = null
     if (audioInputRef.current) audioInputRef.current.value = ''
     if (jsonInputRef.current) jsonInputRef.current.value = ''
@@ -157,6 +201,17 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     if (docInputRef.current) docInputRef.current.value = ''
     onOpenChange(false)
     onAdded()
+  }
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && busy) {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+        abortControllerRef.current = null
+      }
+      setBusy(false)
+    }
+    onOpenChange(nextOpen)
   }
 
   /**
@@ -186,16 +241,20 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
         const pdfExt = pdfFile.name.split('.').pop()?.toLowerCase() || 'pdf'
         const pdfPathname = `${userFolder}/${sanitizedName}.${pdfExt}`
         setUploadStatus('Salvando documento original na nuvem...')
+        addLog(`Salvando documento original (${pdfFile.name})...`, 'INFO')
         const pdfBlob = await uploadToBlob(pdfPathname, pdfFile)
         directPdfPathname = pdfBlob.pathname
       }
 
-      setUploadStatus('Salvando mapa de palavras na nuvem...')
+      setUploadStatus('Salvando mapa de sincronização...')
+      addLog('Salvando mapa de sincronização na nuvem...', 'INFO')
       const jsonBlob = await uploadToBlob(jsonPathname, jsonFile)
       directJsonPathname = jsonBlob.pathname
 
       const audioMb = (audioFile.size / (1024 * 1024)).toFixed(1)
       setUploadStatus(`Salvando áudio: 0% (${audioMb} MB)...`)
+      addLog(`Salvando arquivo de áudio sintetizado (${audioMb} MB)...`, 'INFO')
+
       const audioBlob = await uploadToBlob(audioPathname, audioFile, (percentage) => {
         setUploadProgress(percentage)
         setUploadStatus(`Salvando áudio: ${percentage}% de ${audioMb} MB`)
@@ -205,11 +264,14 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     } catch (directErr) {
       directError = directErr instanceof Error ? directErr : new Error(String(directErr))
       console.warn('[upload] Direct client upload failed, tentando fallback:', directErr)
+      addLog(`Aviso no upload direto, utilizando canal do servidor: ${directError.message}`, 'WARN')
     }
 
     if (usedDirectUpload) {
       setUploadProgress(100)
       setUploadStatus('Registrando livro na biblioteca...')
+      addLog('Registrando livro na biblioteca do leitor 3D...', 'INFO')
+
       const response = await fetch('/api/books', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -235,10 +297,13 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
       }
 
       if (!response.ok) {
-        setError(payload?.error || 'Erro ao registrar livro na biblioteca.')
+        const msg = payload?.error || 'Erro ao registrar livro na biblioteca.'
+        setError(msg)
+        addLog(`Erro: ${msg}`, 'ERROR')
         return
       }
 
+      addLog('Livro salvo com sucesso! Abrindo leitor...', 'SUCCESS')
       resetAndClose()
       return
     }
@@ -251,12 +316,16 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
 
     if (!isLocalhost && audioFile.size > 4.5 * 1024 * 1024) {
       const detail = directError?.message || 'Falha ao conectar com o Vercel Blob.'
-      setError(`Não foi possível enviar o áudio (${(audioFile.size / (1024 * 1024)).toFixed(1)} MB): ${detail}`)
+      const msg = `Não foi possível enviar o áudio (${(audioFile.size / (1024 * 1024)).toFixed(1)} MB): ${detail}`
+      setError(msg)
+      addLog(msg, 'ERROR')
       return
     }
 
     // Fallback: servidor
     setUploadStatus('Finalizando gravação via servidor...')
+    addLog('Enviando dados consolidados via servidor...', 'INFO')
+
     const formData = new FormData()
     formData.append('audio', audioFile)
     formData.append('json', jsonFile)
@@ -278,10 +347,13 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     }
 
     if (!response.ok) {
-      setError(payload?.error || `Erro ${response.status}: Não foi possível adicionar o livro.`)
+      const msg = payload?.error || `Erro ${response.status}: Não foi possível adicionar o livro.`
+      setError(msg)
+      addLog(msg, 'ERROR')
       return
     }
 
+    addLog('Livro salvo com sucesso!', 'SUCCESS')
     resetAndClose()
   }
 
@@ -321,9 +393,14 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
 
       setBusy(true)
       setUploadProgress(0)
+      setLogs([])
+      setUploadStatus('Iniciando processamento na nuvem...')
+
+      const abortController = new AbortController()
+      abortControllerRef.current = abortController
 
       try {
-        const client = new AudiobookApiClient('https://api-edge-tts.onrender.com')
+        const client = new AudiobookApiClient(apiUrl.trim() || 'https://api-edge-tts.onrender.com')
 
         const result = await client.processarLivro(
           docFile,
@@ -331,9 +408,24 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
             voz: selectedVoice,
             rate: selectedRate,
             termoCabecalho: headerFilter,
-          },
-          (status) => setUploadStatus(status)
+            signal: abortController.signal,
+            onLog: (log) => {
+              addLog(log.mensagem, log.nivel || 'INFO')
+            },
+            onProgress: (prog) => {
+              setUploadProgress(prog.porcentagem)
+              if (prog.mensagem) {
+                setUploadStatus(prog.mensagem)
+              }
+            },
+            onStatusUpdate: (status) => {
+              setUploadStatus(status)
+            },
+          }
         )
+
+        setUploadStatus('Salvando livro na sua biblioteca...')
+        addLog('Áudio e mapa recebidos com sucesso. Gravando na biblioteca...', 'SUCCESS')
 
         // Converte blobs gerados em objetos File para salvamento permanente
         const audioFile = new File([result.audioBlob], `${name}.mp3`, { type: 'audio/mpeg' })
@@ -341,10 +433,19 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
 
         await persistBookFiles(audioFile, jsonFile, name, replaceExisting, docFile)
       } catch (err: any) {
+        if (err?.name === 'AbortError') {
+          addLog('Processamento cancelado pelo usuário.', 'WARN')
+          setUploadStatus('Processamento cancelado.')
+          return
+        }
         console.error('[UploadBookDialog] Erro na síntese via IA:', err)
-        setError(err?.message || 'Falha ao processar o documento com a API de IA.')
+        const errMsg = err?.message || 'Falha ao processar o documento com a API de IA.'
+        setError(errMsg)
+        setUploadStatus(`Erro: ${errMsg}`)
+        addLog(`Erro: ${errMsg}`, 'ERROR')
       } finally {
         setBusy(false)
+        abortControllerRef.current = null
       }
 
       return
@@ -370,13 +471,17 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
 
     setBusy(true)
     setUploadProgress(0)
+    setLogs([])
     setUploadStatus('Preparando arquivos...')
+    addLog(`Iniciando upload manual do livro "${name}"...`, 'INFO')
 
     try {
       await persistBookFiles(audio, wordMap, name, replaceExisting, manualPdf)
     } catch (fetchErr) {
       console.error('[upload-book] Upload error:', fetchErr)
-      setError(fetchErr instanceof Error ? fetchErr.message : 'Falha na conexão ao adicionar o livro.')
+      const msg = fetchErr instanceof Error ? fetchErr.message : 'Falha na conexão ao adicionar o livro.'
+      setError(msg)
+      addLog(msg, 'ERROR')
     } finally {
       setBusy(false)
       setUploadStatus('')
@@ -384,10 +489,10 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm transition-opacity data-ending-style:opacity-0 data-starting-style:opacity-0" />
-        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 max-h-[min(90dvh,48rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-library-border bg-library-surface p-6 text-library-ink shadow-2xl outline-none sm:p-8">
+        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 max-h-[min(90dvh,50rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-library-border bg-library-surface p-6 text-library-ink shadow-2xl outline-none sm:p-8">
           <div className="flex items-start justify-between gap-4">
             <div>
               <Dialog.Title className="font-brand text-2xl font-medium tracking-tight text-library-ink">
@@ -519,6 +624,45 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                     />
                   </div>
                 </div>
+
+                {/* Configuração Avançada do Endpoint da API (Hugging Face / Render) */}
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setShowApiConfig(!showApiConfig)}
+                    className="flex items-center gap-1.5 text-xs text-library-muted hover:text-library-ink transition-colors"
+                  >
+                    <SlidersHorizontal className="size-3 text-library-accent" />
+                    <span>{showApiConfig ? 'Ocultar configurações da API' : 'Configurar URL da API (Hugging Face / Render)'}</span>
+                  </button>
+
+                  {showApiConfig && (
+                    <div className="mt-2 space-y-1.5 rounded-xl border border-library-border/50 bg-library-page/40 p-3">
+                      <label htmlFor="ai-api-url-input" className="block text-xs font-medium text-library-ink">
+                        URL Base da API (v2.0 com SSE)
+                      </label>
+                      <Input
+                        id="ai-api-url-input"
+                        type="url"
+                        value={apiUrl}
+                        disabled={busy}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setApiUrl(val)
+                          if (typeof window !== 'undefined') {
+                            localStorage.setItem('audiobook_api_url', val)
+                          }
+                        }}
+                        placeholder="https://SEU-SPACE.hf.space ou https://api-edge-tts.onrender.com"
+                        className="h-9 border-library-border bg-library-surface text-library-ink text-xs font-mono"
+                      />
+                      <p className="text-[11px] leading-relaxed text-library-muted">
+                        Insira a URL do seu Space no Hugging Face (<code className="rounded bg-black/20 px-1 py-0.5">https://SEU-SPACE.hf.space</code>) ou servidor próprio.
+                      </p>
+                    </div>
+                  )}
+                </div>
               </>
             ) : (
               <>
@@ -644,28 +788,96 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
             {fieldError && <p role="alert" className="text-sm font-medium text-destructive">{fieldError}</p>}
             {error && <div role="alert" aria-live="assertive" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">{error}</div>}
 
+            {/* ── Painel de Logs em Tempo Real e Barra de Progresso Viva ── */}
             {busy && (
-              <div className="space-y-2 rounded-xl border border-library-border bg-library-selected/50 p-4" aria-live="polite">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="flex items-center gap-2 font-medium text-library-ink">
-                    <Loader2 className="size-4 animate-spin text-library-accent" />
-                    {uploadStatus || 'Processando audiolivro…'}
-                  </span>
-                  {uploadProgress > 0 && (
-                    <span className="font-semibold text-library-accent">{uploadProgress}%</span>
+              <div
+                className="space-y-3 rounded-xl border border-[#30363d] bg-[#0d1117] p-4 text-white shadow-2xl"
+                aria-live="polite"
+              >
+                {/* Cabeçalho do Console Terminal */}
+                <div className="flex items-center justify-between border-b border-[#30363d]/80 pb-2.5 text-xs">
+                  <div className="flex items-center gap-2 font-mono text-xs">
+                    <span className="flex size-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <Terminal className="size-3.5 text-emerald-400" />
+                    <span className="font-semibold text-emerald-400">terminal</span>
+                    <span className="text-[#8b949e]">/</span>
+                    <span className="text-neutral-300">logs em tempo real</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="size-2.5 rounded-full border border-[#f85149]/60 bg-[#f85149]/40" />
+                    <span className="size-2.5 rounded-full border border-[#d29922]/60 bg-[#d29922]/40" />
+                    <span className="size-2.5 rounded-full border border-[#3fb950]/60 bg-[#3fb950]/40" />
+                  </div>
+                </div>
+
+                {/* Console de Logs com Auto-scroll */}
+                <div
+                  id="terminal-logs"
+                  ref={terminalLogsRef}
+                  style={{
+                    background: '#0d1117',
+                    color: '#58a6ff',
+                    fontFamily: 'monospace',
+                    height: '160px',
+                    overflowY: 'auto',
+                    padding: '10px',
+                    borderRadius: '6px',
+                  }}
+                  className="space-y-1 text-xs select-text scrollbar-thin scrollbar-thumb-neutral-700"
+                >
+                  {logs.length === 0 ? (
+                    <div className="italic text-[#8b949e]">Conectando ao túnel de logs da API...</div>
+                  ) : (
+                    logs.map((log) => (
+                      <div
+                        key={log.id}
+                        className={`log-entry log-${(log.nivel || 'info').toLowerCase()}`}
+                      >
+                        [{log.tempo}] {log.mensagem}
+                      </div>
+                    ))
                   )}
                 </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-library-border">
-                  <div
-                    className="h-full bg-library-accent transition-all duration-200"
-                    style={{ width: `${Math.max(uploadProgress, 8)}%` }}
-                  />
+
+                {/* Barra de Progresso e Status em Tempo Real */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between text-xs font-mono">
+                    <span id="status-texto" className="truncate pr-2 font-medium text-neutral-200">
+                      {uploadStatus || 'Iniciando processamento na nuvem...'}
+                    </span>
+                    <span className="shrink-0 font-bold text-emerald-400">
+                      {uploadProgress}%
+                    </span>
+                  </div>
+
+                  <div className="h-3.5 w-full overflow-hidden rounded-full bg-[#161b22] border border-[#30363d] p-0.5">
+                    <div
+                      id="barra-progresso"
+                      className="h-full rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-400 text-[9px] font-bold text-white flex items-center justify-center transition-all duration-300 shadow-sm"
+                      style={{ width: `${Math.max(uploadProgress, 4)}%` }}
+                    >
+                      {uploadProgress > 10 ? `${uploadProgress}%` : ''}
+                    </div>
+                  </div>
                 </div>
-                {mode === 'ai' && (
-                  <p className="text-xs text-library-muted">
-                    Dica: Se o servidor no Render estiver hibernando, ele levará até 60s para acordar. O áudio e a sincronização serão gerados logo em seguida.
-                  </p>
-                )}
+
+                {/* Ação de Cancelar */}
+                <div className="flex items-center justify-between pt-1 text-xs text-[#8b949e]">
+                  <span>Canal SSE ativo</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (abortControllerRef.current) {
+                        abortControllerRef.current.abort()
+                        abortControllerRef.current = null
+                      }
+                      setBusy(false)
+                    }}
+                    className="text-neutral-400 hover:text-red-400 transition-colors underline underline-offset-4"
+                  >
+                    Cancelar processamento
+                  </button>
+                </div>
               </div>
             )}
 
@@ -678,14 +890,13 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                     Cancelar
                   </Button>
                   <Button type="button" disabled={busy} className="h-10 rounded-xl bg-library-ink text-library-surface hover:bg-library-ink/90 font-medium" onClick={() => void submit(true)}>
-                    {busy && <Loader2 className="size-4 animate-spin" />}
-                    {busy ? (uploadStatus || 'Enviando…') : 'Substituir livro'}
+                    Substituir livro
                   </Button>
                 </div>
               </div>
             )}
 
-            {!conflict && (
+            {!conflict && !busy && (
               <Button
                 type="submit"
                 disabled={
@@ -696,17 +907,13 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                 }
                 className="h-11 w-full rounded-xl bg-library-accent font-semibold text-library-accent-foreground shadow-sm transition-all hover:bg-library-accent/90 active:scale-[0.98] disabled:opacity-50"
               >
-                {busy ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : mode === 'ai' ? (
+                {mode === 'ai' ? (
                   <Sparkles aria-hidden="true" className="size-4" />
                 ) : (
                   <Upload aria-hidden="true" className="size-4" />
                 )}
                 <span>
-                  {busy
-                    ? uploadStatus || 'Processando…'
-                    : mode === 'ai'
+                  {mode === 'ai'
                     ? 'Gerar Audiolivro com IA'
                     : 'Adicionar à biblioteca'}
                 </span>

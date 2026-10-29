@@ -1,6 +1,6 @@
 /**
- * Cliente de Integração com a API Python (FastAPI + edge-tts) no Render
- * Endpoint padrão: https://api-edge-tts.onrender.com
+ * Cliente de Integração com a API de Audiolivros v2.0
+ * Suporta túnel de logs e progresso em tempo real via Server-Sent Events (SSE).
  */
 
 export type WordTiming = {
@@ -9,11 +9,30 @@ export type WordTiming = {
   f: number
 }
 
+export type LogEvent = {
+  tipo?: 'log'
+  nivel?: string
+  mensagem: string
+  tempo?: string
+}
+
+export type ProgressEvent = {
+  tipo?: 'progresso'
+  porcentagem: number
+  parte_atual?: number
+  total_partes?: number
+  mensagem?: string
+}
+
 export type ProcessBookOptions = {
   voz?: string
   rate?: string
   pitch?: string
   termoCabecalho?: string
+  onLog?: (log: LogEvent) => void
+  onProgress?: (progress: ProgressEvent) => void
+  onStatusUpdate?: (status: string) => void
+  signal?: AbortSignal
 }
 
 export type ProcessBookResult = {
@@ -31,28 +50,82 @@ export type ProcessBookResult = {
 export class AudiobookApiClient {
   private baseUrl: string
 
-  constructor(baseUrl = 'https://api-edge-tts.onrender.com') {
+  constructor(baseUrl = process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'https://api-edge-tts.onrender.com') {
     this.baseUrl = baseUrl.replace(/\/+$/, '')
   }
 
   /**
-   * Envia o PDF ou DOCX diretamente para processamento e geração de audiolivro sincronizado.
-   * Se o servidor no Render estiver em hibernação (plano gratuito), o próprio proxy do Render
-   * segura a requisição enquanto inicializa o container (geralmente entre 30 e 60 segundos).
+   * Resolve uma URL retornada pela API (podendo ser relativa ou absoluta, HTTP ou HTTPS).
+   */
+  private resolveUrl(url?: string): string {
+    if (!url) return ''
+    let resolved = url.trim()
+    if (!resolved.startsWith('http://') && !resolved.startsWith('https://')) {
+      resolved = new URL(resolved.startsWith('/') ? resolved : `/${resolved}`, this.baseUrl).toString()
+    }
+    // No navegador sob HTTPS, converte http para https para evitar bloqueio de conteúdo misto
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:' && resolved.startsWith('http://')) {
+      resolved = resolved.replace(/^http:\/\//i, 'https://')
+    }
+    return resolved
+  }
+
+  private async fetchAudioBlob(url: string, signal?: AbortSignal): Promise<Blob> {
+    const resolved = this.resolveUrl(url)
+    const res = await fetch(resolved, { signal })
+    if (!res.ok) {
+      throw new Error(`Não foi possível baixar o áudio (${res.status} ${res.statusText}).`)
+    }
+    return await res.blob()
+  }
+
+  private async fetchWordMap(
+    url?: string,
+    inlineWords?: any,
+    signal?: AbortSignal
+  ): Promise<{ words: WordTiming[]; jsonBlob: Blob }> {
+    let words: WordTiming[] = []
+
+    if (Array.isArray(inlineWords) && inlineWords.length > 0 && typeof inlineWords[0]?.p === 'string') {
+      words = inlineWords
+    } else if (url) {
+      const resolved = this.resolveUrl(url)
+      const res = await fetch(resolved, { signal })
+      if (res.ok) {
+        const data = await res.json()
+        words = Array.isArray(data) ? data : data.words || data.mapa || []
+      }
+    }
+
+    const jsonBlob = new Blob([JSON.stringify(words, null, 2)], {
+      type: 'application/json',
+    })
+
+    return { words, jsonBlob }
+  }
+
+  /**
+   * Envia o documento para processamento (POST /processar-livro/) e conecta
+   * imediatamente ao túnel SSE (GET /jobs/{job_id}/stream) para emitir logs
+   * e porcentagem de progresso em tempo real.
    */
   async processarLivro(
     file: File,
     options: ProcessBookOptions = {},
-    onStatusUpdate?: (status: string) => void
+    legacyStatusCallback?: (status: string) => void
   ): Promise<ProcessBookResult> {
     const {
       voz = 'pt-BR-AntonioNeural',
       rate = '+0%',
       pitch = '-5Hz',
       termoCabecalho,
+      onLog,
+      onProgress,
+      onStatusUpdate = legacyStatusCallback,
+      signal,
     } = options
 
-    onStatusUpdate?.(`Enviando "${file.name}" para a API...`)
+    onStatusUpdate?.('Iniciando processamento na nuvem...')
 
     const formData = new FormData()
     formData.append('file', file)
@@ -64,35 +137,28 @@ export class AudiobookApiClient {
       formData.append('termo_cabecalho', termoCabecalho.trim())
     }
 
-    // Timer visual enquanto a IA processa e o Render acorda se necessário
-    const processStart = Date.now()
-    const timerInterval = setInterval(() => {
-      const elapsed = Math.round((Date.now() - processStart) / 1000)
-      if (elapsed < 30) {
-        onStatusUpdate?.(
-          `Conectando ao servidor e gerando narração neural (${elapsed}s)...`
-        )
-      } else {
-        onStatusUpdate?.(
-          `Sintetizando áudio com IA (${elapsed}s)... (Se o servidor estava hibernando, ele leva até ~50s para iniciar)`
-        )
-      }
-    }, 1200)
+    // Dispara log inicial no terminal
+    onLog?.({
+      tipo: 'log',
+      nivel: 'INFO',
+      mensagem: `Enviando arquivo "${file.name}" (${(file.size / (1024 * 1024)).toFixed(2)} MB) para a API...`,
+      tempo: new Date().toLocaleTimeString('pt-BR'),
+    })
 
+    // 1. Inicia o Job (retorno imediato na API v2.0)
     let response: Response
     try {
       response = await fetch(`${this.baseUrl}/processar-livro/`, {
         method: 'POST',
         body: formData,
+        signal,
       })
     } catch (fetchErr: any) {
-      clearInterval(timerInterval)
+      if (fetchErr?.name === 'AbortError') {
+        throw fetchErr
+      }
       const msg = fetchErr?.message || String(fetchErr)
-      throw new Error(
-        `Falha de conexão com a API no Render: ${msg}. Verifique se o servidor está ativo em ${this.baseUrl}`
-      )
-    } finally {
-      clearInterval(timerInterval)
+      throw new Error(`Falha de conexão com a API: ${msg}. Verifique se o servidor está ativo em ${this.baseUrl}`)
     }
 
     if (!response.ok) {
@@ -100,52 +166,215 @@ export class AudiobookApiClient {
       try {
         const errJson = await response.json()
         if (errJson?.detail) errorMsg = errJson.detail
+        else if (errJson?.mensagem) errorMsg = errJson.mensagem
+        else if (errJson?.error) errorMsg = errJson.error
       } catch {}
       throw new Error(errorMsg)
     }
 
-    const payload = await response.json()
-    const title = payload.nome_livro || file.name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ')
+    const jobData = await response.json()
+    const jobId = jobData.job_id || ''
+    const title = jobData.nome_livro || file.name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ')
 
-    // Normaliza URLs para HTTPS
-    const rawAudioUrl = String(payload.download_audio_url || '').replace(/^http:\/\//i, 'https://')
-    const rawMapaUrl = String(payload.download_mapa_url || '').replace(/^http:\/\//i, 'https://')
+    // Se a API não retornou stream_url (ex: resposta v1 síncrona legada), realiza download direto
+    if (!jobData.stream_url) {
+      onStatusUpdate?.('Processamento concluído. Baixando arquivos...')
+      const rawAudioUrl = this.resolveUrl(jobData.download_audio_url)
+      const rawMapaUrl = this.resolveUrl(jobData.download_mapa_url)
+      const [audioBlob, jsonResult] = await Promise.all([
+        this.fetchAudioBlob(rawAudioUrl, signal),
+        this.fetchWordMap(rawMapaUrl, jobData.mapa || jobData.mapa_tempos, signal),
+      ])
 
-    // O FastAPI retorna os tempos na propriedade 'mapa' (com fallback para 'mapa_tempos')
-    const rawWords = payload.mapa || payload.mapa_tempos || []
-
-    onStatusUpdate?.('Baixando áudio gerado para salvar na sua biblioteca...')
-    const audioRes = await fetch(rawAudioUrl)
-    if (!audioRes.ok) {
-      throw new Error('Não foi possível baixar o arquivo de áudio gerado pela API.')
-    }
-    const audioBlob = await audioRes.blob()
-
-    let words: WordTiming[] = []
-    if (Array.isArray(rawWords) && rawWords.length > 0 && typeof rawWords[0]?.p === 'string') {
-      words = rawWords
-    } else if (rawMapaUrl) {
-      onStatusUpdate?.('Baixando mapa de sincronização...')
-      const jsonRes = await fetch(rawMapaUrl)
-      if (jsonRes.ok) {
-        words = await jsonRes.json()
+      return {
+        title,
+        jobId,
+        audioUrl: rawAudioUrl,
+        mapaUrl: rawMapaUrl,
+        words: jsonResult.words,
+        durationSeconds: jobData.duracao_segundos ?? 0,
+        totalWords: jsonResult.words.length,
+        audioBlob,
+        jsonBlob: jsonResult.jsonBlob,
       }
     }
 
-    const jsonBlob = new Blob([JSON.stringify(words, null, 2)], {
-      type: 'application/json',
-    })
+    // 2. Abre o Túnel SSE para streaming de logs e progresso em tempo real
+    const streamUrl = this.resolveUrl(jobData.stream_url)
 
-    return {
-      title,
-      jobId: payload.job_id,
-      audioUrl: rawAudioUrl,
-      mapaUrl: rawMapaUrl,
-      words,
-      durationSeconds: payload.duracao_segundos ?? 0,
-      totalWords: payload.total_palavras ?? words.length,
-      audioBlob,
-      jsonBlob,
-    }
+    return new Promise<ProcessBookResult>((resolve, reject) => {
+      let canalLogs: EventSource | null = null
+      let isSettled = false
+
+      const closeEventSource = () => {
+        if (canalLogs) {
+          try {
+            canalLogs.close()
+          } catch {}
+          canalLogs = null
+        }
+      }
+
+      if (signal) {
+        signal.addEventListener('abort', () => {
+          if (!isSettled) {
+            isSettled = true
+            closeEventSource()
+            reject(new DOMException('Operação cancelada', 'AbortError'))
+          }
+        })
+      }
+
+      onLog?.({
+        tipo: 'log',
+        nivel: 'INFO',
+        mensagem: `Túnel SSE conectado para o Job [${jobId || 'ativo'}]. Aguardando etapas...`,
+        tempo: new Date().toLocaleTimeString('pt-BR'),
+      })
+
+      canalLogs = new EventSource(streamUrl)
+
+      const handleRawMessage = async (rawString: string) => {
+        if (!rawString || !rawString.trim()) return
+
+        let evento: any
+        try {
+          evento = JSON.parse(rawString)
+        } catch {
+          // Linha de texto simples
+          onLog?.({
+            tipo: 'log',
+            nivel: 'INFO',
+            mensagem: rawString,
+            tempo: new Date().toLocaleTimeString('pt-BR'),
+          })
+          return
+        }
+
+        const tipo = evento.tipo
+
+        if (tipo === 'log') {
+          onLog?.({
+            tipo: 'log',
+            nivel: evento.nivel || 'INFO',
+            mensagem: evento.mensagem || '',
+            tempo: evento.tempo || new Date().toLocaleTimeString('pt-BR'),
+          })
+        }
+
+        if (tipo === 'progresso') {
+          const porcentagem =
+            typeof evento.porcentagem === 'number'
+              ? evento.porcentagem
+              : Number(evento.porcentagem) || 0
+
+          onProgress?.({
+            tipo: 'progresso',
+            porcentagem,
+            parte_atual: evento.parte_atual,
+            total_partes: evento.total_partes,
+            mensagem: evento.mensagem,
+          })
+
+          const statusMsg = evento.mensagem || `Progresso: ${porcentagem}%`
+          onStatusUpdate?.(statusMsg)
+        }
+
+        if (tipo === 'concluido') {
+          if (isSettled) return
+          isSettled = true
+          closeEventSource()
+
+          onStatusUpdate?.('Áudio e sincronização gerados com sucesso!')
+          onProgress?.({
+            tipo: 'progresso',
+            porcentagem: 100,
+            mensagem: 'Áudio e sincronização gerados com sucesso!',
+          })
+
+          onLog?.({
+            tipo: 'log',
+            nivel: 'SUCCESS',
+            mensagem: 'Processamento concluído com sucesso! Baixando arquivos gerados...',
+            tempo: new Date().toLocaleTimeString('pt-BR'),
+          })
+
+          try {
+            const finalAudioUrl = this.resolveUrl(
+              evento.download_audio_url || jobData.download_audio_url
+            )
+            const finalMapaUrl = this.resolveUrl(
+              evento.download_mapa_url || jobData.download_mapa_url
+            )
+
+            const [audioBlob, jsonResult] = await Promise.all([
+              this.fetchAudioBlob(finalAudioUrl, signal),
+              this.fetchWordMap(finalMapaUrl, evento.mapa || jobData.mapa, signal),
+            ])
+
+            resolve({
+              title: evento.nome_livro || title,
+              jobId: evento.job_id || jobId,
+              audioUrl: finalAudioUrl,
+              mapaUrl: finalMapaUrl,
+              words: jsonResult.words,
+              durationSeconds:
+                (typeof evento.duracao_minutos === 'number'
+                  ? evento.duracao_minutos * 60
+                  : undefined) ??
+                jobData.duracao_segundos ??
+                0,
+              totalWords: jsonResult.words.length,
+              audioBlob,
+              jsonBlob: jsonResult.jsonBlob,
+            })
+          } catch (downloadErr: any) {
+            reject(new Error(`Falha ao baixar arquivos gerados: ${downloadErr.message || downloadErr}`))
+          }
+        }
+
+        if (tipo === 'erro') {
+          if (isSettled) return
+          isSettled = true
+          closeEventSource()
+
+          const erroMsg = evento.mensagem || 'Ocorreu um erro no processamento do audiolivro.'
+          onStatusUpdate?.(`Erro: ${erroMsg}`)
+          onLog?.({
+            tipo: 'log',
+            nivel: 'ERROR',
+            mensagem: `Erro: ${erroMsg}`,
+            tempo: new Date().toLocaleTimeString('pt-BR'),
+          })
+          reject(new Error(erroMsg))
+        }
+      }
+
+      canalLogs.onmessage = (event) => {
+        void handleRawMessage(event.data)
+      }
+
+      // Suporte para eventos SSE nomeados caso a API use "event: log" etc
+      canalLogs.addEventListener('log', (event: any) => void handleRawMessage(event.data))
+      canalLogs.addEventListener('progresso', (event: any) => void handleRawMessage(event.data))
+      canalLogs.addEventListener('concluido', (event: any) => void handleRawMessage(event.data))
+      canalLogs.addEventListener('erro', (event: any) => void handleRawMessage(event.data))
+
+      canalLogs.onerror = (err) => {
+        if (isSettled) return
+        isSettled = true
+        closeEventSource()
+        console.error('Erro na conexão SSE:', err)
+        const errMsg = 'Conexão com o servidor de logs perdida.'
+        onStatusUpdate?.(errMsg)
+        onLog?.({
+          tipo: 'log',
+          nivel: 'ERROR',
+          mensagem: errMsg,
+          tempo: new Date().toLocaleTimeString('pt-BR'),
+        })
+        reject(new Error(errMsg))
+      }
+    })
   }
 }
