@@ -5,7 +5,7 @@ import { headers } from 'next/headers'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { book, audiobookProgress } from '@/lib/db/schema'
-import { isValidWordMap } from '@/lib/books/word-map'
+import { isValidWordMap, sanitizeWordMap } from '@/lib/books/word-map'
 import { saveAudiobookFile, deleteAudiobookFiles } from '@/lib/storage'
 
 async function getSession() {
@@ -164,9 +164,16 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: 'O mapa de palavras não contém um JSON válido.' }, { status: 400 })
   }
-  if (!isValidWordMap(parsedMap)) {
+  const sanitizedWords = sanitizeWordMap(parsedMap)
+  if (!sanitizedWords || sanitizedWords.length === 0) {
     return NextResponse.json({ error: 'O mapa deve conter palavras e tempos válidos nos campos p, i e f.' }, { status: 400 })
   }
+
+  const cleanJsonFile = new File(
+    [JSON.stringify(sanitizedWords, null, 2)],
+    json.name || `${name}.json`,
+    { type: 'application/json' }
+  )
 
   const [existing] = await db.select().from(book).where(
     and(eq(book.userId, session.user.id), eq(book.name, name)),
@@ -185,7 +192,7 @@ export async function POST(request: Request) {
     const pdf = formData.get('pdf')
     const [audioBlob, jsonBlob, pdfBlob] = await Promise.all([
       saveAudiobookFile(prefix, 'audio', audio),
-      saveAudiobookFile(prefix, 'json', json),
+      saveAudiobookFile(prefix, 'json', cleanJsonFile),
       pdf instanceof File && pdf.size > 0 ? saveAudiobookFile(prefix, 'pdf', pdf) : Promise.resolve(null),
     ])
     const now = new Date()

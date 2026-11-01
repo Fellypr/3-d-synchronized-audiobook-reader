@@ -63,9 +63,14 @@ export class AudiobookApiClient {
     if (!resolved.startsWith('http://') && !resolved.startsWith('https://')) {
       resolved = new URL(resolved.startsWith('/') ? resolved : `/${resolved}`, this.baseUrl).toString()
     }
-    // No navegador sob HTTPS, converte http para https para evitar bloqueio de conteúdo misto
-    if (typeof window !== 'undefined' && window.location.protocol === 'https:' && resolved.startsWith('http://')) {
-      resolved = resolved.replace(/^http:\/\//i, 'https://')
+    // Converte http para https se o navegador estiver em https OU se a baseUrl do serviço for https
+    // (evita que requisições no localhost recebam redirect 301 de HTTP para HTTPS que quebram CORS no navegador)
+    if (resolved.startsWith('http://')) {
+      const isBrowserHttps = typeof window !== 'undefined' && window.location.protocol === 'https:'
+      const isBaseHttps = this.baseUrl.startsWith('https://')
+      if (isBrowserHttps || isBaseHttps) {
+        resolved = resolved.replace(/^http:\/\//i, 'https://')
+      }
     }
     return resolved
   }
@@ -74,7 +79,7 @@ export class AudiobookApiClient {
     const resolved = this.resolveUrl(url)
     const res = await fetch(resolved, { signal })
     if (!res.ok) {
-      throw new Error(`Não foi possível baixar o áudio (${res.status} ${res.statusText}).`)
+      throw new Error(`Não foi possível baixar o áudio da API (${res.status} ${res.statusText}). URL: ${resolved}`)
     }
     return await res.blob()
   }
@@ -86,15 +91,20 @@ export class AudiobookApiClient {
   ): Promise<{ words: WordTiming[]; jsonBlob: Blob }> {
     let words: WordTiming[] = []
 
-    if (Array.isArray(inlineWords) && inlineWords.length > 0 && typeof inlineWords[0]?.p === 'string') {
+    if (Array.isArray(inlineWords) && inlineWords.length > 0) {
       words = inlineWords
     } else if (url) {
       const resolved = this.resolveUrl(url)
       const res = await fetch(resolved, { signal })
-      if (res.ok) {
-        const data = await res.json()
-        words = Array.isArray(data) ? data : data.words || data.mapa || []
+      if (!res.ok) {
+        throw new Error(`Falha ao baixar o mapa de palavras da API (${res.status} ${res.statusText}). URL: ${resolved}`)
       }
+      const data = await res.json()
+      words = Array.isArray(data) ? data : data.words || data.mapa || []
+    }
+
+    if (!words || words.length === 0) {
+      throw new Error('A API retornou um mapa de palavras vazio. Verifique se o documento contém texto legível e se a API gerou os tempos.')
     }
 
     const jsonBlob = new Blob([JSON.stringify(words, null, 2)], {
