@@ -654,11 +654,45 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                             localStorage.setItem('audiobook_api_url', val)
                           }
                         }}
-                        placeholder="https://SEU-SPACE.hf.space ou https://api-edge-tts.onrender.com"
+                        placeholder="http://127.0.0.1:8000 ou https://api-edge-tts.onrender.com"
                         className="h-9 border-library-border bg-library-surface text-library-ink text-xs font-mono"
                       />
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            const local = 'http://127.0.0.1:8000'
+                            setApiUrl(local)
+                            if (typeof window !== 'undefined') localStorage.setItem('audiobook_api_url', local)
+                          }}
+                          className={`rounded-lg px-2.5 py-1 text-xs font-medium border transition-colors ${
+                            apiUrl.includes('8000') || apiUrl.includes('localhost')
+                              ? 'border-library-accent bg-library-accent/15 text-library-accent'
+                              : 'border-library-border bg-library-surface text-library-muted hover:text-library-ink'
+                          }`}
+                        >
+                          💻 Servidor Local (127.0.0.1:8000)
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            const render = 'https://api-edge-tts.onrender.com'
+                            setApiUrl(render)
+                            if (typeof window !== 'undefined') localStorage.setItem('audiobook_api_url', render)
+                          }}
+                          className={`rounded-lg px-2.5 py-1 text-xs font-medium border transition-colors ${
+                            apiUrl.includes('render.com')
+                              ? 'border-library-accent bg-library-accent/15 text-library-accent'
+                              : 'border-library-border bg-library-surface text-library-muted hover:text-library-ink'
+                          }`}
+                        >
+                          ☁️ Nuvem Render (Online)
+                        </button>
+                      </div>
                       <p className="text-[11px] leading-relaxed text-library-muted">
-                        Insira a URL do seu Space no Hugging Face (<code className="rounded bg-black/20 px-1 py-0.5">https://SEU-SPACE.hf.space</code>) ou servidor próprio.
+                        Para geração ultra rápida e sem oscilações, selecione o <strong>Servidor Local</strong> com o gerador de áudio aberto.
                       </p>
                     </div>
                   )}

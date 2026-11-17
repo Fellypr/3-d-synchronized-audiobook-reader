@@ -291,56 +291,7 @@ export class AudiobookApiClient {
         }
 
         if (tipo === 'concluido') {
-          if (isSettled) return
-          isSettled = true
-          closeEventSource()
-
-          onStatusUpdate?.('Áudio e sincronização gerados com sucesso!')
-          onProgress?.({
-            tipo: 'progresso',
-            porcentagem: 100,
-            mensagem: 'Áudio e sincronização gerados com sucesso!',
-          })
-
-          onLog?.({
-            tipo: 'log',
-            nivel: 'SUCCESS',
-            mensagem: 'Processamento concluído com sucesso! Baixando arquivos gerados...',
-            tempo: new Date().toLocaleTimeString('pt-BR'),
-          })
-
-          try {
-            const finalAudioUrl = this.resolveUrl(
-              evento.download_audio_url || jobData.download_audio_url
-            )
-            const finalMapaUrl = this.resolveUrl(
-              evento.download_mapa_url || jobData.download_mapa_url
-            )
-
-            const [audioBlob, jsonResult] = await Promise.all([
-              this.fetchAudioBlob(finalAudioUrl, signal),
-              this.fetchWordMap(finalMapaUrl, evento.mapa || jobData.mapa, signal),
-            ])
-
-            resolve({
-              title: evento.nome_livro || title,
-              jobId: evento.job_id || jobId,
-              audioUrl: finalAudioUrl,
-              mapaUrl: finalMapaUrl,
-              words: jsonResult.words,
-              durationSeconds:
-                (typeof evento.duracao_minutos === 'number'
-                  ? evento.duracao_minutos * 60
-                  : undefined) ??
-                jobData.duracao_segundos ??
-                0,
-              totalWords: jsonResult.words.length,
-              audioBlob,
-              jsonBlob: jsonResult.jsonBlob,
-            })
-          } catch (downloadErr: any) {
-            reject(new Error(`Falha ao baixar arquivos gerados: ${downloadErr.message || downloadErr}`))
-          }
+          await finalizeSuccess(evento)
         }
 
         if (tipo === 'erro') {
@@ -360,6 +311,59 @@ export class AudiobookApiClient {
         }
       }
 
+      const finalizeSuccess = async (evento: any) => {
+        if (isSettled) return
+        isSettled = true
+        closeEventSource()
+
+        onStatusUpdate?.('Áudio e sincronização gerados com sucesso!')
+        onProgress?.({
+          tipo: 'progresso',
+          porcentagem: 100,
+          mensagem: 'Áudio e sincronização gerados com sucesso!',
+        })
+
+        onLog?.({
+          tipo: 'log',
+          nivel: 'SUCCESS',
+          mensagem: 'Processamento concluído com sucesso! Baixando arquivos gerados...',
+          tempo: new Date().toLocaleTimeString('pt-BR'),
+        })
+
+        try {
+          const finalAudioUrl = this.resolveUrl(
+            evento.download_audio_url || jobData.download_audio_url
+          )
+          const finalMapaUrl = this.resolveUrl(
+            evento.download_mapa_url || jobData.download_mapa_url
+          )
+
+          const [audioBlob, jsonResult] = await Promise.all([
+            this.fetchAudioBlob(finalAudioUrl, signal),
+            this.fetchWordMap(finalMapaUrl, evento.mapa || jobData.mapa, signal),
+          ])
+
+          resolve({
+            title: evento.nome_livro || title,
+            jobId: evento.job_id || jobId,
+            audioUrl: finalAudioUrl,
+            mapaUrl: finalMapaUrl,
+            words: jsonResult.words,
+            durationSeconds:
+              (typeof evento.duracao_minutos === 'number'
+                ? evento.duracao_minutos * 60
+                : undefined) ??
+              jobData.duracao_segundos ??
+              0,
+            totalWords: jsonResult.words.length,
+            audioBlob,
+            jsonBlob: jsonResult.jsonBlob,
+          })
+        } catch (downloadErr: any) {
+          reject(new Error(`Falha ao baixar arquivos gerados: ${downloadErr.message || downloadErr}`))
+        }
+      }
+
       canalLogs.onmessage = (event) => {
         void handleRawMessage(event.data)
       }
@@ -372,18 +376,76 @@ export class AudiobookApiClient {
 
       canalLogs.onerror = (err) => {
         if (isSettled) return
-        isSettled = true
         closeEventSource()
-        console.error('Erro na conexão SSE:', err)
-        const errMsg = 'Conexão com o servidor de logs perdida.'
-        onStatusUpdate?.(errMsg)
+        console.warn('Conexão com túnel SSE oscilou. Ativando fallback resiliente via polling...', err)
+
         onLog?.({
           tipo: 'log',
-          nivel: 'ERROR',
-          mensagem: errMsg,
+          nivel: 'WARN',
+          mensagem: 'Túnel de logs SSE oscilou. Alternando automaticamente para monitoramento de status da API...',
           tempo: new Date().toLocaleTimeString('pt-BR'),
         })
-        reject(new Error(errMsg))
+
+        if (!jobId) {
+          isSettled = true
+          const errMsg = 'Conexão com o servidor de logs perdida e nenhum Job ID registrado.'
+          onStatusUpdate?.(errMsg)
+          reject(new Error(errMsg))
+          return
+        }
+
+        // Fallback resiliente: polling em /status/{job_id}
+        const statusUrl = this.resolveUrl(jobData.status_url || `/status/${jobId}`)
+        let pollAttempts = 0
+        const maxPollAttempts = 150 // até 6 minutos (2.5s * 150)
+
+        const pollInterval = setInterval(async () => {
+          if (isSettled) {
+            clearInterval(pollInterval)
+            return
+          }
+          pollAttempts++
+          if (pollAttempts > maxPollAttempts) {
+            clearInterval(pollInterval)
+            isSettled = true
+            const timeoutMsg = 'Tempo limite de processamento atingido no servidor.'
+            onLog?.({
+              tipo: 'log',
+              nivel: 'ERROR',
+              mensagem: timeoutMsg,
+              tempo: new Date().toLocaleTimeString('pt-BR'),
+            })
+            reject(new Error(timeoutMsg))
+            return
+          }
+
+          try {
+            const statusRes = await fetch(statusUrl, { signal })
+            if (!statusRes.ok) return
+            const statusData = await statusRes.json()
+
+            if (statusData.status === 'concluido' || statusData.tipo === 'concluido') {
+              clearInterval(pollInterval)
+              await finalizeSuccess(statusData)
+            } else if (statusData.status === 'erro' || statusData.tipo === 'erro') {
+              clearInterval(pollInterval)
+              isSettled = true
+              const erroMsg = statusData.mensagem || 'Ocorreu um erro no processamento do audiolivro.'
+              onStatusUpdate?.(`Erro: ${erroMsg}`)
+              reject(new Error(erroMsg))
+            } else if (statusData.progresso) {
+              const porcentagem = Number(statusData.progresso) || 0
+              onProgress?.({
+                tipo: 'progresso',
+                porcentagem,
+                mensagem: statusData.mensagem || `Processando: ${porcentagem}%`,
+              })
+              onStatusUpdate?.(statusData.mensagem || `Processando audiolivro (${porcentagem}%)...`)
+            }
+          } catch {
+            // Ignora falhas momentâneas de rede no polling
+          }
+        }, 2500)
       }
     })
   }
