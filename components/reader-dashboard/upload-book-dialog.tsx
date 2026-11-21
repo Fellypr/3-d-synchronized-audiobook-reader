@@ -103,6 +103,8 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   const [headerFilter, setHeaderFilter] = useState('')
   const [paginaInicial, setPaginaInicial] = useState('')
   const [paginaFinal, setPaginaFinal] = useState('')
+  const [pdfTotalPages, setPdfTotalPages] = useState<number | null>(null)
+  const [isDetectingPages, setIsDetectingPages] = useState(false)
   const [apiUrl, setApiUrl] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('audiobook_api_url')
@@ -167,13 +169,32 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     }
   }
 
-  function setDocumentFile(file?: File) {
+  async function setDocumentFile(file?: File) {
     setDocFile(file ?? null)
     setFieldError('')
     setError('')
     setConflict(null)
+    setPdfTotalPages(null)
+
     if (file && (!title.trim() || !isTitleCustomized)) {
       setTitle(cleanFileNameToTitle(file.name))
+    }
+
+    if (file && file.name.toLowerCase().endsWith('.pdf')) {
+      setIsDetectingPages(true)
+      try {
+        const arrayBuffer = await file.arrayBuffer()
+        const pdfjsLib = await import('pdfjs-dist')
+        if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+        }
+        const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+        setPdfTotalPages(pdfDoc.numPages)
+      } catch (err) {
+        console.warn('Não foi possível inspecionar páginas do PDF:', err)
+      } finally {
+        setIsDetectingPages(false)
+      }
     }
   }
 
@@ -186,6 +207,8 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     setWordMap(null)
     setManualPdf(null)
     setDocFile(null)
+    setPdfTotalPages(null)
+    setIsDetectingPages(false)
     setTitle('')
     setCoverUrl('')
     setHeaderFilter('')
@@ -395,6 +418,24 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
         return
       }
 
+      const pIni = paginaInicial.trim() ? parseInt(paginaInicial.trim(), 10) : undefined
+      const pFim = paginaFinal.trim() ? parseInt(paginaFinal.trim(), 10) : undefined
+
+      if (pIni && pFim && pIni > pFim) {
+        setFieldError(`A página inicial (${pIni}) não pode ser maior que a página final (${pFim}).`)
+        return
+      }
+      if (pdfTotalPages) {
+        if (pIni && (pIni < 1 || pIni > pdfTotalPages)) {
+          setFieldError(`A página inicial (${pIni}) é inválida. O livro possui ${pdfTotalPages} páginas.`)
+          return
+        }
+        if (pFim && (pFim < 1 || pFim > pdfTotalPages)) {
+          setFieldError(`A página final (${pFim}) excede o total do livro (${pdfTotalPages} páginas).`)
+          return
+        }
+      }
+
       setBusy(true)
       setUploadProgress(0)
       setLogs([])
@@ -405,9 +446,6 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
 
       try {
         const client = new AudiobookApiClient(apiUrl.trim() || 'https://api-edge-tts.onrender.com')
-
-        const pIni = paginaInicial.trim() ? parseInt(paginaInicial.trim(), 10) : undefined
-        const pFim = paginaFinal.trim() ? parseInt(paginaFinal.trim(), 10) : undefined
 
         const result = await client.processarLivro(
           docFile,
@@ -429,6 +467,18 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
             },
             onStatusUpdate: (status) => {
               setUploadStatus(status)
+            },
+            onPartialReady: async (partialResult) => {
+              addLog('🎉 Primeiro trecho pronto para audição imediata! Disponibilizando na sua estante...', 'SUCCESS')
+              setUploadStatus('Trecho inicial pronto na estante! Continuando narração em segundo plano...')
+              try {
+                const partialAudioFile = new File([partialResult.audioBlob], `${name}.mp3`, { type: 'audio/mpeg' })
+                const partialJsonFile = new File([partialResult.jsonBlob], `${name}.json`, { type: 'application/json' })
+                await persistBookFiles(partialAudioFile, partialJsonFile, name, true, docFile)
+                onAdded()
+              } catch (pSaveErr) {
+                console.warn('Erro ao salvar livro parcial:', pSaveErr)
+              }
             },
           }
         )
@@ -635,40 +685,88 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                 </div>
 
                 {/* Intervalo de Páginas (Opcional - Ideal para Livros Grandes / Capítulos) */}
-                <div className="rounded-xl border border-library-border/50 bg-library-page/30 p-3 space-y-2">
+                <div className="rounded-xl border border-library-border/50 bg-library-page/30 p-3.5 space-y-2.5">
                   <div className="flex items-center justify-between">
                     <label className="flex items-center gap-2 text-xs font-medium text-library-ink">
                       <FileText className="size-3.5 text-library-accent" />
-                      Intervalo de Páginas <span className="text-[11px] text-library-muted">(opcional)</span>
+                      <span>Intervalo de Páginas</span>
+                      <span className="text-[11px] text-library-muted">(opcional)</span>
                     </label>
-                    <span className="text-[11px] text-library-muted">Deixe em branco para o livro completo</span>
+
+                    {isDetectingPages ? (
+                      <span className="flex items-center gap-1.5 text-[11px] text-library-muted animate-pulse">
+                        <span className="size-1.5 rounded-full bg-library-accent" />
+                        Detectando páginas...
+                      </span>
+                    ) : pdfTotalPages ? (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                        📄 {pdfTotalPages} páginas detectadas
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-library-muted">Deixe vazio para o livro todo</span>
+                    )}
                   </div>
+
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
                       <span className="text-[11px] text-library-muted">Página inicial</span>
                       <Input
                         type="number"
                         min={1}
+                        max={pdfTotalPages || undefined}
                         value={paginaInicial}
-                        onChange={(e) => setPaginaInicial(e.target.value)}
+                        onChange={(e) => {
+                          setPaginaInicial(e.target.value)
+                          setFieldError('')
+                        }}
                         placeholder="Ex: 1"
                         disabled={busy}
                         className="h-9 border-library-border bg-library-surface text-library-ink text-xs"
                       />
                     </div>
                     <div className="space-y-1">
-                      <span className="text-[11px] text-library-muted">Página final</span>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-library-muted">Página final</span>
+                        {pdfTotalPages && !paginaFinal && (
+                          <button
+                            type="button"
+                            onClick={() => setPaginaFinal(String(pdfTotalPages))}
+                            className="text-[10px] text-library-accent hover:underline"
+                          >
+                            Até o fim ({pdfTotalPages})
+                          </button>
+                        )}
+                      </div>
                       <Input
                         type="number"
                         min={1}
+                        max={pdfTotalPages || undefined}
                         value={paginaFinal}
-                        onChange={(e) => setPaginaFinal(e.target.value)}
-                        placeholder="Ex: 50"
+                        onChange={(e) => {
+                          setPaginaFinal(e.target.value)
+                          setFieldError('')
+                        }}
+                        placeholder={pdfTotalPages ? `Ex: ${pdfTotalPages}` : 'Ex: 50'}
                         disabled={busy}
-                        className="h-9 border-library-border bg-library-surface text-library-ink text-xs"
+                        className={`h-9 border-library-border bg-library-surface text-library-ink text-xs ${
+                          pdfTotalPages && paginaFinal && parseInt(paginaFinal, 10) > pdfTotalPages
+                            ? 'border-red-500 text-red-500'
+                            : ''
+                        }`}
                       />
                     </div>
                   </div>
+
+                  {pdfTotalPages && paginaFinal && parseInt(paginaFinal, 10) > pdfTotalPages && (
+                    <p className="text-[11px] font-medium text-destructive">
+                      ⚠️ A página final ({paginaFinal}) excede o total do livro ({pdfTotalPages} páginas).
+                    </p>
+                  )}
+                  {paginaInicial && paginaFinal && parseInt(paginaInicial, 10) > parseInt(paginaFinal, 10) && (
+                    <p className="text-[11px] font-medium text-destructive">
+                      ⚠️ A página inicial não pode ser maior que a página final.
+                    </p>
+                  )}
                 </div>
 
                 {/* Configuração Avançada do Endpoint da API (Hugging Face / Render) */}

@@ -34,6 +34,7 @@ export type ProcessBookOptions = {
   onLog?: (log: LogEvent) => void
   onProgress?: (progress: ProgressEvent) => void
   onStatusUpdate?: (status: string) => void
+  onPartialReady?: (data: ProcessBookResult) => void
   signal?: AbortSignal
 }
 
@@ -298,6 +299,38 @@ export class AudiobookApiClient {
           onStatusUpdate?.(statusMsg)
         }
 
+        if (tipo === 'liberado_parcial') {
+          onLog?.({
+            tipo: 'log',
+            nivel: 'SUCCESS',
+            mensagem: '🎉 Primeiro trecho pronto para leitura antecipada! Continuando narração em segundo plano...',
+            tempo: evento.tempo || new Date().toLocaleTimeString('pt-BR'),
+          })
+          if (options.onPartialReady) {
+            try {
+              const partialAudioUrl = this.resolveUrl(evento.download_audio_url || jobData.download_audio_url)
+              const partialMapaUrl = this.resolveUrl(evento.download_mapa_url || jobData.download_mapa_url)
+              const [audioBlob, jsonResult] = await Promise.all([
+                this.fetchAudioBlob(partialAudioUrl, signal),
+                this.fetchWordMap(partialMapaUrl, evento.mapa || jobData.mapa, signal),
+              ])
+              options.onPartialReady({
+                title: evento.nome_livro || title,
+                jobId: evento.job_id || jobId,
+                audioUrl: partialAudioUrl,
+                mapaUrl: partialMapaUrl,
+                words: jsonResult.words,
+                durationSeconds: (typeof evento.duracao_minutos === 'number' ? evento.duracao_minutos * 60 : evento.duracao_segundos) ?? 0,
+                totalWords: jsonResult.words.length,
+                audioBlob,
+                jsonBlob: jsonResult.jsonBlob,
+              })
+            } catch (errParcial) {
+              console.warn('[SSE] Erro ao carregar liberação parcial:', errParcial)
+            }
+          }
+        }
+
         if (tipo === 'concluido') {
           await finalizeSuccess(evento)
         }
@@ -379,6 +412,7 @@ export class AudiobookApiClient {
       // Suporte para eventos SSE nomeados caso a API use "event: log" etc
       canalLogs.addEventListener('log', (event: any) => void handleRawMessage(event.data))
       canalLogs.addEventListener('progresso', (event: any) => void handleRawMessage(event.data))
+      canalLogs.addEventListener('liberado_parcial', (event: any) => void handleRawMessage(event.data))
       canalLogs.addEventListener('concluido', (event: any) => void handleRawMessage(event.data))
       canalLogs.addEventListener('erro', (event: any) => void handleRawMessage(event.data))
 
