@@ -132,7 +132,15 @@ function BookCarousel({
   books,
   onOpen,
 }: {
-  books: Array<{ id: string; name: string; coverUrl?: string | null; progressPercent?: number | null }>
+  books: Array<{
+    id: string
+    name: string
+    coverUrl?: string | null
+    progressPercent?: number | null
+    status?: string | null
+    completedParts?: number | null
+    totalParts?: number | null
+  }>
   onOpen: (id: string) => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -264,13 +272,35 @@ function BookCarousel({
             </div>
 
             {/* Título do livro abaixo do mockup */}
-            <div className="flex w-[145px] flex-col items-center">
+            <div className="flex w-[145px] flex-col items-center gap-1">
               <span
                 className="w-full truncate text-center text-xs font-medium text-library-ink/90 transition-colors group-hover:text-library-accent"
                 title={book.name}
               >
                 {book.name}
               </span>
+
+              {book.status === 'processando' && (
+                <div className="flex w-full flex-col items-center gap-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px]">
+                  <div className="flex items-center gap-1.5 font-semibold text-amber-500 leading-tight">
+                    <span className="size-1.5 rounded-full bg-amber-400 animate-pulse" />
+                    <span>Em 2º plano</span>
+                  </div>
+                  <span className="text-[9px] text-library-muted text-center leading-tight">
+                    {book.completedParts && book.totalParts
+                      ? `${book.completedParts}/${book.totalParts} partes (faltam ${Math.max(0, book.totalParts - book.completedParts)})`
+                      : 'Gerando áudio...'}
+                  </span>
+                  {book.completedParts && book.totalParts && book.totalParts > 0 && (
+                    <div className="h-1 w-full overflow-hidden rounded-full bg-neutral-700/40">
+                      <div
+                        className="h-full rounded-full bg-amber-500 transition-all duration-300"
+                        style={{ width: `${Math.min(100, (book.completedParts / book.totalParts) * 100)}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </button>
         ))}

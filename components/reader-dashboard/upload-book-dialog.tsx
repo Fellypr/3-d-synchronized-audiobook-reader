@@ -250,6 +250,14 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     bookName: string,
     replaceExisting = false,
     pdfFile?: File | null,
+    extraMeta?: {
+      status?: 'concluido' | 'processando'
+      jobId?: string
+      completedParts?: number
+      totalParts?: number
+      durationSeconds?: number
+      autoClose?: boolean
+    }
   ) {
     const sanitizedName = bookName.replace(/[^a-z0-9_-]+/gi, '_')
     const audioExt = audioFile.name.split('.').pop()?.toLowerCase() || 'mp3'
@@ -309,6 +317,11 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
           jsonUrl: directJsonPathname,
           pdfUrl: directPdfPathname || undefined,
           replaceExisting,
+          status: extraMeta?.status || 'concluido',
+          jobId: extraMeta?.jobId,
+          completedParts: extraMeta?.completedParts,
+          totalParts: extraMeta?.totalParts,
+          durationSeconds: extraMeta?.durationSeconds,
         }),
       })
 
@@ -330,8 +343,12 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
         return
       }
 
-      addLog('Livro salvo com sucesso! Abrindo leitor...', 'SUCCESS')
-      resetAndClose()
+      addLog('Livro salvo com sucesso!', 'SUCCESS')
+      if (extraMeta?.autoClose !== false) {
+        resetAndClose()
+      } else {
+        onAdded()
+      }
       return
     }
 
@@ -468,29 +485,58 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
             onStatusUpdate: (status) => {
               setUploadStatus(status)
             },
-            onPartialReady: async (partialResult) => {
-              addLog('🎉 Primeiro trecho pronto para audição imediata! Disponibilizando na sua estante...', 'SUCCESS')
-              setUploadStatus('Trecho inicial pronto na estante! Continuando narração em segundo plano...')
+            onBlockReady: async (blockData) => {
+              const pConcluidas = blockData.completedParts
+              const tPartes = blockData.totalParts
+              const bAtual = blockData.blockIndex
+              const tBlocos = blockData.totalBlocks
+              const isFinal = pConcluidas >= tPartes
+
+              addLog(`🎉 Macro-Bloco ${bAtual}/${tBlocos} (${pConcluidas}/${tPartes} partes) gravado na estante!`, 'SUCCESS')
+              setUploadStatus(
+                isFinal
+                  ? 'Livro 100% concluído na estante!'
+                  : `Bloco ${bAtual}/${tBlocos} salvo na estante! Continuando em segundo plano...`
+              )
+
               try {
-                const partialAudioFile = new File([partialResult.audioBlob], `${name}.mp3`, { type: 'audio/mpeg' })
-                const partialJsonFile = new File([partialResult.jsonBlob], `${name}.json`, { type: 'application/json' })
-                await persistBookFiles(partialAudioFile, partialJsonFile, name, true, docFile)
+                const bAudio = new File([blockData.audioBlob], `${name}.mp3`, { type: 'audio/mpeg' })
+                const bJson = new File([blockData.jsonBlob], `${name}.json`, { type: 'application/json' })
+                await persistBookFiles(bAudio, bJson, name, true, docFile, {
+                  status: isFinal ? 'concluido' : 'processando',
+                  jobId: blockData.jobId,
+                  completedParts: pConcluidas,
+                  totalParts: tPartes,
+                  durationSeconds: blockData.durationSeconds,
+                  autoClose: false,
+                })
                 onAdded()
-              } catch (pSaveErr) {
-                console.warn('Erro ao salvar livro parcial:', pSaveErr)
+              } catch (bErr) {
+                console.warn('Erro ao salvar bloco na estante:', bErr)
               }
+            },
+            onCooldown: (cd) => {
+              addLog(`⏸️ Resfriamento de ${cd.seconds}s (limite Microsoft). Faltam ${cd.remainingParts} partes. Bloco ${cd.nextBlock}/${cd.totalBlocks} a seguir...`, 'INFO')
+              setUploadStatus(`Pausa de 2min (limite Microsoft). Faltam ${cd.remainingParts} partes...`)
             },
           }
         )
 
-        setUploadStatus('Salvando livro na sua biblioteca...')
-        addLog('Áudio e mapa recebidos com sucesso. Gravando na biblioteca...', 'SUCCESS')
+        setUploadStatus('Livro 100% consolidado na sua biblioteca!')
+        addLog('Processamento completo! Gravando versão final consolidada...', 'SUCCESS')
 
         // Converte blobs gerados em objetos File para salvamento permanente
         const audioFile = new File([result.audioBlob], `${name}.mp3`, { type: 'audio/mpeg' })
         const jsonFile = new File([result.jsonBlob], `${name}.json`, { type: 'application/json' })
 
-        await persistBookFiles(audioFile, jsonFile, name, replaceExisting, docFile)
+        await persistBookFiles(audioFile, jsonFile, name, replaceExisting, docFile, {
+          status: 'concluido',
+          jobId: result.jobId,
+          completedParts: result.totalWords ? result.totalWords : 100,
+          totalParts: result.totalWords ? result.totalWords : 100,
+          durationSeconds: result.durationSeconds,
+          autoClose: true,
+        })
       } catch (err: any) {
         if (err?.name === 'AbortError') {
           addLog('Processamento cancelado pelo usuário.', 'WARN')

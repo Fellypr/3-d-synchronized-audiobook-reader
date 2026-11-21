@@ -55,6 +55,10 @@ export const book = pgTable('book', {
   pdfUrl: text('pdfUrl'),
   coverUrl: text('coverUrl'),
   durationSeconds: real('durationSeconds'),
+  status: text('status').notNull().default('concluido'),
+  jobId: text('jobId'),
+  completedParts: real('completedParts').default(0),
+  totalParts: real('totalParts').default(0),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => ({ userBookNameUnique: unique('book_user_name_unique').on(table.userId, table.name) }))

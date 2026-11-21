@@ -35,22 +35,41 @@ export async function PATCH(request: Request) {
   const session = await getSession()
   if (!session?.user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
 
-  let body: { bookId?: string; durationSeconds?: number }
+  let body: {
+    bookId?: string
+    durationSeconds?: number
+    status?: string
+    completedParts?: number
+    totalParts?: number
+  }
   try {
     body = await request.json()
   } catch {
     return NextResponse.json({ error: 'Corpo da solicitação inválido.' }, { status: 400 })
   }
 
-  const durationSeconds = Number(body.durationSeconds)
-  if (!body.bookId || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-    return NextResponse.json({ error: 'Duração do áudio inválida.' }, { status: 400 })
+  if (!body.bookId) {
+    return NextResponse.json({ error: 'ID do livro obrigatório.' }, { status: 400 })
+  }
+
+  const updateFields: any = { updatedAt: new Date() }
+  if (typeof body.durationSeconds === 'number' && Number.isFinite(body.durationSeconds) && body.durationSeconds > 0) {
+    updateFields.durationSeconds = body.durationSeconds
+  }
+  if (typeof body.status === 'string') {
+    updateFields.status = body.status
+  }
+  if (typeof body.completedParts === 'number') {
+    updateFields.completedParts = body.completedParts
+  }
+  if (typeof body.totalParts === 'number') {
+    updateFields.totalParts = body.totalParts
   }
 
   const [updated] = await db.update(book)
-    .set({ durationSeconds })
+    .set(updateFields)
     .where(and(eq(book.id, body.bookId), eq(book.userId, session.user.id)))
-    .returning({ id: book.id, durationSeconds: book.durationSeconds })
+    .returning()
 
   if (!updated) return NextResponse.json({ error: 'Livro não encontrado.' }, { status: 404 })
   return NextResponse.json(updated)
@@ -62,7 +81,19 @@ export async function POST(request: Request) {
 
   // Support direct JSON submission when client uploads directly to Vercel Blob
   if (request.headers.get('content-type')?.includes('application/json')) {
-    let body: { name?: string; audioUrl?: string; jsonUrl?: string; pdfUrl?: string; coverUrl?: string; replaceExisting?: boolean }
+    let body: {
+      name?: string
+      audioUrl?: string
+      jsonUrl?: string
+      pdfUrl?: string
+      coverUrl?: string
+      replaceExisting?: boolean
+      status?: string
+      jobId?: string
+      completedParts?: number
+      totalParts?: number
+      durationSeconds?: number
+    }
     try {
       body = await request.json()
     } catch {
@@ -75,6 +106,11 @@ export async function POST(request: Request) {
     const pdfUrl = body.pdfUrl?.trim() || null
     const coverUrl = body.coverUrl?.trim() || null
     const replaceExisting = Boolean(body.replaceExisting)
+    const status = body.status || 'concluido'
+    const jobId = body.jobId?.trim() || null
+    const completedParts = typeof body.completedParts === 'number' ? body.completedParts : 0
+    const totalParts = typeof body.totalParts === 'number' ? body.totalParts : 0
+    const durationSeconds = typeof body.durationSeconds === 'number' ? body.durationSeconds : null
 
     if (!name || !audioUrl || !jsonUrl) {
       return NextResponse.json({ error: 'Dados incompletos (nome, áudio e mapa JSON são obrigatórios).' }, { status: 400 })
@@ -101,7 +137,11 @@ export async function POST(request: Request) {
             jsonUrl,
             pdfUrl: pdfUrl ?? existing.pdfUrl,
             coverUrl: coverUrl ?? existing.coverUrl,
-            durationSeconds: null,
+            durationSeconds: durationSeconds ?? existing.durationSeconds,
+            status,
+            jobId: jobId ?? existing.jobId,
+            completedParts,
+            totalParts,
             updatedAt: now,
           })
           .where(and(eq(book.id, existing.id), eq(book.userId, session.user.id)))
@@ -114,7 +154,11 @@ export async function POST(request: Request) {
           jsonUrl,
           pdfUrl,
           coverUrl,
-          durationSeconds: null,
+          durationSeconds,
+          status,
+          jobId,
+          completedParts,
+          totalParts,
           createdAt: now,
           updatedAt: now,
         }).returning()

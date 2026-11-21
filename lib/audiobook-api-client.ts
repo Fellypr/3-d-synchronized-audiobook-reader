@@ -35,6 +35,8 @@ export type ProcessBookOptions = {
   onProgress?: (progress: ProgressEvent) => void
   onStatusUpdate?: (status: string) => void
   onPartialReady?: (data: ProcessBookResult) => void
+  onBlockReady?: (blockData: ProcessBookResult & { completedParts: number; totalParts: number; blockIndex: number; totalBlocks: number }) => void
+  onCooldown?: (data: { seconds: number; nextBlock: number; totalBlocks: number; completedParts: number; totalParts: number; remainingParts: number }) => void
   signal?: AbortSignal
 }
 
@@ -331,6 +333,74 @@ export class AudiobookApiClient {
           }
         }
 
+        if (tipo === 'bloco_concluido') {
+          const partesConcluidas = Number(evento.partes_concluidas) || 0
+          const totalPartes = Number(evento.total_partes) || 0
+          const blocoAtual = Number(evento.bloco_atual) || 1
+          const totalBlocos = Number(evento.total_blocos) || 1
+          const durMin = typeof evento.duracao_minutos === 'number' ? evento.duracao_minutos : Math.round((evento.duracao_segundos || 0) / 60)
+
+          onLog?.({
+            tipo: 'log',
+            nivel: 'SUCCESS',
+            mensagem: `✅ Macro-Bloco ${blocoAtual}/${totalBlocos} concluído (${partesConcluidas}/${totalPartes} partes | ~${durMin} min prontos)!`,
+            tempo: evento.tempo || new Date().toLocaleTimeString('pt-BR'),
+          })
+
+          if (options.onBlockReady) {
+            try {
+              const partialAudioUrl = this.resolveUrl(evento.download_audio_url || jobData.download_audio_url)
+              const partialMapaUrl = this.resolveUrl(evento.download_mapa_url || jobData.download_mapa_url)
+              const [audioBlob, jsonResult] = await Promise.all([
+                this.fetchAudioBlob(partialAudioUrl, signal),
+                this.fetchWordMap(partialMapaUrl, evento.mapa || jobData.mapa, signal),
+              ])
+              options.onBlockReady({
+                title: evento.nome_livro || title,
+                jobId: evento.job_id || jobId,
+                audioUrl: partialAudioUrl,
+                mapaUrl: partialMapaUrl,
+                words: jsonResult.words,
+                durationSeconds: (typeof evento.duracao_minutos === 'number' ? evento.duracao_minutos * 60 : evento.duracao_segundos) ?? 0,
+                totalWords: jsonResult.words.length,
+                audioBlob,
+                jsonBlob: jsonResult.jsonBlob,
+                completedParts: partesConcluidas,
+                totalParts: totalPartes,
+                blockIndex: blocoAtual,
+                totalBlocks: totalBlocos,
+              })
+            } catch (errBloco) {
+              console.warn('[SSE] Erro ao carregar bloco consolidado:', errBloco)
+            }
+          }
+        }
+
+        if (tipo === 'cooldown') {
+          const segundos = Number(evento.segundos) || 120
+          const prox = Number(evento.proximo_bloco) || 2
+          const totalB = Number(evento.total_blocos) || 2
+          const partesRestantes = Number(evento.partes_restantes) || 0
+
+          const msgCooldown = `⏸️ Pausa de resfriamento de ${segundos}s (limite Microsoft). Faltam ${partesRestantes} partes. Bloco ${prox}/${totalB} iniciará a seguir...`
+          onLog?.({
+            tipo: 'log',
+            nivel: 'INFO',
+            mensagem: msgCooldown,
+            tempo: evento.tempo || new Date().toLocaleTimeString('pt-BR'),
+          })
+          onStatusUpdate?.(msgCooldown)
+
+          options.onCooldown?.({
+            seconds: segundos,
+            nextBlock: prox,
+            totalBlocks: totalB,
+            completedParts: Number(evento.partes_concluidas) || 0,
+            totalParts: Number(evento.total_partes) || 0,
+            remainingParts: partesRestantes,
+          })
+        }
+
         if (tipo === 'concluido') {
           await finalizeSuccess(evento)
         }
@@ -412,6 +482,8 @@ export class AudiobookApiClient {
       // Suporte para eventos SSE nomeados caso a API use "event: log" etc
       canalLogs.addEventListener('log', (event: any) => void handleRawMessage(event.data))
       canalLogs.addEventListener('progresso', (event: any) => void handleRawMessage(event.data))
+      canalLogs.addEventListener('bloco_concluido', (event: any) => void handleRawMessage(event.data))
+      canalLogs.addEventListener('cooldown', (event: any) => void handleRawMessage(event.data))
       canalLogs.addEventListener('liberado_parcial', (event: any) => void handleRawMessage(event.data))
       canalLogs.addEventListener('concluido', (event: any) => void handleRawMessage(event.data))
       canalLogs.addEventListener('erro', (event: any) => void handleRawMessage(event.data))

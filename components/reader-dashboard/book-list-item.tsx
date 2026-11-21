@@ -78,7 +78,14 @@ export function BookListItem({ book, isLastRead, view, onDeleted }: BookListItem
   const actionLabel = state === 'not-started' ? 'Iniciar' : 'Continuar'
 
   const statusBadge =
-    state === 'completed' ? (
+    book.status === 'processando' ? (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-medium text-amber-500 border border-amber-500/30">
+        <span className="size-1.5 rounded-full bg-amber-400 animate-pulse" />
+        {book.completedParts && book.totalParts
+          ? `2º plano (${book.completedParts}/${book.totalParts})`
+          : 'Gerando áudio...'}
+      </span>
+    ) : state === 'completed' ? (
       <span className="inline-flex items-center gap-1 rounded-full bg-library-success/15 px-2.5 py-0.5 text-[11px] font-medium text-library-success border border-library-success/20">
         <CheckCircle2 className="size-3" />
         Concluído
