@@ -336,6 +336,16 @@ export function ReaderDashboard({
   const hasMeasuredListening = progress.some((item) => item.listenedSeconds !== null)
   const inProgressCount = dashboardBooks.filter((item) => getBookReadingState(item) === 'in-progress').length
 
+  // Auto-refresh da estante a cada 6 segundos enquanto houver livros sendo sintetizados em segundo plano
+  const hasProcessingBooks = books.some((b) => b.status === 'processando')
+  useEffect(() => {
+    if (!hasProcessingBooks) return
+    const interval = setInterval(() => {
+      router.refresh()
+    }, 6000)
+    return () => clearInterval(interval)
+  }, [hasProcessingBooks, router])
+
   const visibleBooks = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase('pt-BR')
     return dashboardBooks.filter((item) => {

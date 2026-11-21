@@ -377,6 +377,11 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     if (pdfFile) formData.append('pdf', pdfFile)
     if (coverUrl.trim()) formData.append('coverUrl', coverUrl.trim())
     formData.append('replaceExisting', String(replaceExisting))
+    if (extraMeta?.status) formData.append('status', extraMeta.status)
+    if (extraMeta?.jobId) formData.append('jobId', extraMeta.jobId)
+    if (typeof extraMeta?.completedParts === 'number') formData.append('completedParts', String(extraMeta.completedParts))
+    if (typeof extraMeta?.totalParts === 'number') formData.append('totalParts', String(extraMeta.totalParts))
+    if (typeof extraMeta?.durationSeconds === 'number') formData.append('durationSeconds', String(extraMeta.durationSeconds))
 
     const response = await fetch('/api/books', { method: 'POST', body: formData })
     let payload: any = null

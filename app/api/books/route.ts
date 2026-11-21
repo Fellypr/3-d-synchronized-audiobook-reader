@@ -234,6 +234,16 @@ export async function POST(request: Request) {
   try {
     const prefix = `audiobooks/${session.user.id}/${name.replace(/[^a-z0-9_-]+/gi, '_')}`
     const pdf = formData.get('pdf')
+    const status = String(formData.get('status') || 'concluido')
+    const rawJobId = formData.get('jobId')
+    const jobId = typeof rawJobId === 'string' && rawJobId.trim() ? rawJobId.trim() : null
+    const rawCompletedParts = formData.get('completedParts')
+    const completedParts = rawCompletedParts ? Number(rawCompletedParts) || 0 : 0
+    const rawTotalParts = formData.get('totalParts')
+    const totalParts = rawTotalParts ? Number(rawTotalParts) || 0 : 0
+    const rawDuration = formData.get('durationSeconds')
+    const durationSeconds = rawDuration ? Number(rawDuration) || null : null
+
     const [audioBlob, jsonBlob, pdfBlob] = await Promise.all([
       saveAudiobookFile(prefix, 'audio', audio),
       saveAudiobookFile(prefix, 'json', cleanJsonFile),
@@ -247,7 +257,11 @@ export async function POST(request: Request) {
           jsonUrl: jsonBlob.pathname,
           pdfUrl: pdfBlob ? pdfBlob.pathname : existing.pdfUrl,
           coverUrl: coverUrl ?? existing.coverUrl,
-          durationSeconds: null,
+          durationSeconds: durationSeconds ?? existing.durationSeconds,
+          status,
+          jobId: jobId ?? existing.jobId,
+          completedParts,
+          totalParts,
           updatedAt: now,
         })
         .where(and(eq(book.id, existing.id), eq(book.userId, session.user.id)))
@@ -260,7 +274,11 @@ export async function POST(request: Request) {
         jsonUrl: jsonBlob.pathname,
         pdfUrl: pdfBlob ? pdfBlob.pathname : null,
         coverUrl,
-        durationSeconds: null,
+        durationSeconds,
+        status,
+        jobId,
+        completedParts,
+        totalParts,
         createdAt: now,
         updatedAt: now,
       }).returning()
