@@ -29,6 +29,8 @@ export type ProcessBookOptions = {
   rate?: string
   pitch?: string
   termoCabecalho?: string
+  paginaInicial?: number
+  paginaFinal?: number
   onLog?: (log: LogEvent) => void
   onProgress?: (progress: ProgressEvent) => void
   onStatusUpdate?: (status: string) => void
@@ -145,6 +147,12 @@ export class AudiobookApiClient {
     formData.append('retornar_mapa_inline', 'true')
     if (termoCabecalho?.trim()) {
       formData.append('termo_cabecalho', termoCabecalho.trim())
+    }
+    if (options.paginaInicial && options.paginaInicial > 0) {
+      formData.append('pagina_inicial', String(options.paginaInicial))
+    }
+    if (options.paginaFinal && options.paginaFinal > 0) {
+      formData.append('pagina_final', String(options.paginaFinal))
     }
 
     // Dispara log inicial no terminal
@@ -397,7 +405,9 @@ export class AudiobookApiClient {
         // Fallback resiliente: polling em /status/{job_id}
         const statusUrl = this.resolveUrl(jobData.status_url || `/status/${jobId}`)
         let pollAttempts = 0
-        const maxPollAttempts = 150 // até 6 minutos (2.5s * 150)
+        const maxPollAttempts = 1200 // até 60 minutos (3s * 1200)
+        let lastReportedPercentage = -1
+        let lastLoggedIndex = 0
 
         const pollInterval = setInterval(async () => {
           if (isSettled) {
@@ -408,7 +418,7 @@ export class AudiobookApiClient {
           if (pollAttempts > maxPollAttempts) {
             clearInterval(pollInterval)
             isSettled = true
-            const timeoutMsg = 'Tempo limite de processamento atingido no servidor.'
+            const timeoutMsg = 'Tempo limite de processamento atingido no servidor (60 minutos).'
             onLog?.({
               tipo: 'log',
               nivel: 'ERROR',
@@ -424,7 +434,27 @@ export class AudiobookApiClient {
             if (!statusRes.ok) return
             const statusData = await statusRes.json()
 
-            if (statusData.status === 'concluido' || statusData.tipo === 'concluido') {
+            // Transmite logs do servidor se disponíveis
+            if (Array.isArray(statusData.logs_recentes) && statusData.logs_recentes.length > lastLoggedIndex) {
+              const novosLogs = statusData.logs_recentes.slice(lastLoggedIndex)
+              for (const l of novosLogs) {
+                if (l.mensagem) {
+                  onLog?.({
+                    tipo: 'log',
+                    nivel: l.nivel || 'INFO',
+                    mensagem: l.mensagem,
+                    tempo: l.tempo || new Date().toLocaleTimeString('pt-BR'),
+                  })
+                }
+              }
+              lastLoggedIndex = statusData.logs_recentes.length
+            }
+
+            if (
+              statusData.status === 'concluido' ||
+              statusData.status === 'sucesso' ||
+              statusData.tipo === 'concluido'
+            ) {
               clearInterval(pollInterval)
               await finalizeSuccess(statusData)
             } else if (statusData.status === 'erro' || statusData.tipo === 'erro') {
@@ -435,17 +465,20 @@ export class AudiobookApiClient {
               reject(new Error(erroMsg))
             } else if (statusData.progresso) {
               const porcentagem = Number(statusData.progresso) || 0
-              onProgress?.({
-                tipo: 'progresso',
-                porcentagem,
-                mensagem: statusData.mensagem || `Processando: ${porcentagem}%`,
-              })
-              onStatusUpdate?.(statusData.mensagem || `Processando audiolivro (${porcentagem}%)...`)
+              if (porcentagem !== lastReportedPercentage) {
+                lastReportedPercentage = porcentagem
+                onProgress?.({
+                  tipo: 'progresso',
+                  porcentagem,
+                  mensagem: statusData.mensagem || `Processando: ${porcentagem}%`,
+                })
+                onStatusUpdate?.(statusData.mensagem || `Processando audiolivro (${porcentagem}%)...`)
+              }
             }
           } catch {
             // Ignora falhas momentâneas de rede no polling
           }
-        }, 2500)
+        }, 3000)
       }
     })
   }

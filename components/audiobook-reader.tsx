@@ -717,8 +717,12 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
               onError={() => setCoverUrl(null)}
             />
           ) : (
-            <div className="flex size-8 sm:size-10 shrink-0 items-center justify-center rounded-lg bg-[#19222d] border border-white/10 text-amber-400/90 shadow-md">
-              <BookOpen className="size-4 sm:size-5" />
+            <div className="flex size-8 sm:size-10 shrink-0 items-center justify-center rounded-lg bg-[#19222d] p-1.5 border border-white/10 shadow-md">
+              <img
+                src="/logo.png"
+                alt={title}
+                className="size-full object-contain"
+              />
             </div>
           )}
           <div className="min-w-0">

@@ -101,6 +101,8 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   const [selectedVoice, setSelectedVoice] = useState('pt-BR-AntonioNeural')
   const [selectedRate, setSelectedRate] = useState('+0%')
   const [headerFilter, setHeaderFilter] = useState('')
+  const [paginaInicial, setPaginaInicial] = useState('')
+  const [paginaFinal, setPaginaFinal] = useState('')
   const [apiUrl, setApiUrl] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('audiobook_api_url')
@@ -187,6 +189,8 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     setTitle('')
     setCoverUrl('')
     setHeaderFilter('')
+    setPaginaInicial('')
+    setPaginaFinal('')
     setIsTitleCustomized(false)
     setConflict(null)
     setError('')
@@ -402,12 +406,17 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
       try {
         const client = new AudiobookApiClient(apiUrl.trim() || 'https://api-edge-tts.onrender.com')
 
+        const pIni = paginaInicial.trim() ? parseInt(paginaInicial.trim(), 10) : undefined
+        const pFim = paginaFinal.trim() ? parseInt(paginaFinal.trim(), 10) : undefined
+
         const result = await client.processarLivro(
           docFile,
           {
             voz: selectedVoice,
             rate: selectedRate,
             termoCabecalho: headerFilter,
+            paginaInicial: pIni && !isNaN(pIni) ? pIni : undefined,
+            paginaFinal: pFim && !isNaN(pFim) ? pFim : undefined,
             signal: abortController.signal,
             onLog: (log) => {
               addLog(log.mensagem, log.nivel || 'INFO')
@@ -622,6 +631,43 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                       disabled={busy}
                       className="h-11 border-library-border bg-library-surface text-library-ink placeholder:text-library-muted focus-visible:outline-library-accent text-sm"
                     />
+                  </div>
+                </div>
+
+                {/* Intervalo de Páginas (Opcional - Ideal para Livros Grandes / Capítulos) */}
+                <div className="rounded-xl border border-library-border/50 bg-library-page/30 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 text-xs font-medium text-library-ink">
+                      <FileText className="size-3.5 text-library-accent" />
+                      Intervalo de Páginas <span className="text-[11px] text-library-muted">(opcional)</span>
+                    </label>
+                    <span className="text-[11px] text-library-muted">Deixe em branco para o livro completo</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <span className="text-[11px] text-library-muted">Página inicial</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={paginaInicial}
+                        onChange={(e) => setPaginaInicial(e.target.value)}
+                        placeholder="Ex: 1"
+                        disabled={busy}
+                        className="h-9 border-library-border bg-library-surface text-library-ink text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[11px] text-library-muted">Página final</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={paginaFinal}
+                        onChange={(e) => setPaginaFinal(e.target.value)}
+                        placeholder="Ex: 50"
+                        disabled={busy}
+                        className="h-9 border-library-border bg-library-surface text-library-ink text-xs"
+                      />
+                    </div>
                   </div>
                 </div>
 

@@ -161,7 +161,7 @@ function BookCarousel({
   function scroll(dir: 'left' | 'right') {
     const el = scrollRef.current
     if (!el) return
-    el.scrollBy({ left: dir === 'left' ? -320 : 320, behavior: 'smooth' })
+    el.scrollBy({ left: dir === 'left' ? -340 : 340, behavior: 'smooth' })
   }
 
   const initials = (name: string) =>
@@ -199,47 +199,79 @@ function BookCarousel({
 
       <div
         ref={scrollRef}
-        className="scrollbar-hide flex gap-4 overflow-x-auto pb-4 pt-1 sm:gap-5"
+        className="scrollbar-hide flex gap-5 overflow-x-auto pb-6 pt-2 sm:gap-6"
         style={{ scrollSnapType: 'x mandatory' }}
       >
         {books.map((book) => (
           <button
             key={book.id}
             onClick={() => onOpen(book.id)}
-            className="book-cover-elevated group flex shrink-0 flex-col items-center gap-2.5 rounded-lg p-1 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-library-accent"
+            className="group flex shrink-0 flex-col items-center gap-2.5 rounded-xl p-1 text-left transition-all duration-200 hover:-translate-y-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-library-accent"
             style={{ scrollSnapAlign: 'start' }}
             aria-label={`Abrir livro: ${book.name}`}
           >
-            <div className="relative">
-              {book.coverUrl ? (
-                <img
-                  src={book.coverUrl}
-                  alt={`Capa de ${book.name}`}
-                  className="book-spine-effect h-44 w-28 rounded-md object-cover transition-all duration-200 sm:h-52 sm:w-34"
-                />
-              ) : (
-                <div className="book-spine-effect flex h-44 w-28 flex-col justify-between rounded-md border border-library-border bg-library-selected p-3 text-center sm:h-52 sm:w-34">
-                  <span className="text-[9px] uppercase tracking-wider text-library-muted">Livro</span>
-                  <div className="flex flex-1 items-center justify-center">
-                    <span className="font-brand text-lg font-bold text-library-accent">
-                      {initials(book.name) || <BookOpen className="size-6 text-library-accent" />}
-                    </span>
-                  </div>
-                  <div className="h-1 w-full rounded-full bg-library-border/50" />
-                </div>
-              )}
+            {/* ─── Mockup 3D do Livro (Figma 22:159) ─── */}
+            <div className="relative h-[215px] w-[159px] shrink-0 drop-shadow-md transition-transform duration-200 group-hover:scale-[1.02]">
+              {/* Moldura física 3D de fundo (lombada e páginas) */}
+              <img
+                src="/book-frame-3d.png"
+                alt=""
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 size-full select-none object-cover"
+              />
 
-              {/* Play overlay on hover */}
-              <div className="absolute inset-0 flex items-center justify-center rounded-md bg-black/40 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 group-hover:opacity-100">
-                <div className="flex size-10 items-center justify-center rounded-full bg-library-accent text-library-accent-foreground shadow-lg">
-                  <Play className="ml-0.5 size-4 fill-current" />
+              {/* Capa inclinada com perspectiva e sombreamento */}
+              <div className="absolute left-[26px] top-[6.8px] flex h-[206px] w-[132px] items-center justify-center">
+                <div className="flex-none rotate-[-2.29deg] skew-x-[-2.29deg]">
+                  <div className="relative h-[201px] w-[132px] overflow-hidden rounded-r-[2px] shadow-[0px_12px_24px_-8px_rgba(0,0,0,0.7)]">
+                    {book.coverUrl ? (
+                      <img
+                        src={book.coverUrl}
+                        alt={`Capa de ${book.name}`}
+                        className="size-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex size-full flex-col justify-between bg-gradient-to-br from-[#2a303c] via-[#1e232d] to-[#151921] p-3 text-center">
+                        <span className="text-[9px] font-semibold uppercase tracking-widest text-library-accent/70">
+                          Audiolivro
+                        </span>
+                        <div className="flex flex-1 items-center justify-center">
+                          <span className="font-brand text-xl font-bold text-library-accent">
+                            {initials(book.name) || <BookOpen className="size-6 text-library-accent" />}
+                          </span>
+                        </div>
+                        <span className="line-clamp-2 text-[10px] font-medium leading-tight text-white/70">
+                          {book.name}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Sombreamento interno de lombada e curvatura da página */}
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0 shadow-[inset_4px_0px_8px_-2px_rgba(0,0,0,0.6),inset_-1px_0px_2px_0px_rgba(255,255,255,0.08)]"
+                    />
+
+                    {/* Overlay interativo com botão de Play no hover */}
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 group-hover:opacity-100">
+                      <div className="flex size-11 items-center justify-center rounded-full bg-library-accent text-library-accent-foreground shadow-xl transition-transform duration-200 group-hover:scale-105">
+                        <Play className="ml-0.5 size-5 fill-current" />
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <span className="w-28 sm:w-34 truncate text-xs font-medium text-library-ink/90 group-hover:text-library-accent transition-colors">
-              {book.name}
-            </span>
+            {/* Título do livro abaixo do mockup */}
+            <div className="flex w-[145px] flex-col items-center">
+              <span
+                className="w-full truncate text-center text-xs font-medium text-library-ink/90 transition-colors group-hover:text-library-accent"
+                title={book.name}
+              >
+                {book.name}
+              </span>
+            </div>
           </button>
         ))}
       </div>
@@ -320,8 +352,12 @@ export function ReaderDashboard({
             className="flex items-center gap-3 rounded-lg text-library-ink focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-library-accent"
             aria-label="Auditeca — início"
           >
-            <span className="flex size-10 items-center justify-center rounded-xl bg-library-accent/15 text-library-accent ring-1 ring-library-accent/30">
-              <BookOpen aria-hidden="true" className="size-5" />
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-orange-500/10 p-1.5 ring-1 ring-orange-500/25">
+              <img
+                src="/logo.png"
+                alt="Auditeca"
+                className="size-full object-contain"
+              />
             </span>
             <div className="flex flex-col">
               <span className="font-brand text-xl font-semibold tracking-tight text-library-ink">
