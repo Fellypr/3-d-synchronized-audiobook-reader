@@ -231,13 +231,9 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   }
 
   const handleOpenChange = (nextOpen: boolean) => {
-    if (!nextOpen && busy) {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort()
-        abortControllerRef.current = null
-      }
-      setBusy(false)
-    }
+    // Ao fechar a janela enquanto o processamento com IA está ativo, NÃO abortamos a síntese em 2º plano,
+    // permitindo que o usuário navegue pela estante enquanto os macro-blocos continuam sendo recebidos e salvos.
+    // O cancelamento definitivo é acionado apenas pelo botão "Cancelar processamento".
     onOpenChange(nextOpen)
   }
 
@@ -403,7 +399,11 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     }
 
     addLog('Livro salvo com sucesso!', 'SUCCESS')
-    resetAndClose()
+    if (extraMeta?.autoClose !== false) {
+      resetAndClose()
+    } else {
+      onAdded()
+    }
   }
 
   async function submit(replaceExisting = false) {

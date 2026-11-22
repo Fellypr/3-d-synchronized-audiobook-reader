@@ -336,15 +336,48 @@ export function ReaderDashboard({
   const hasMeasuredListening = progress.some((item) => item.listenedSeconds !== null)
   const inProgressCount = dashboardBooks.filter((item) => getBookReadingState(item) === 'in-progress').length
 
-  // Auto-refresh da estante a cada 6 segundos enquanto houver livros sendo sintetizados em segundo plano
-  const hasProcessingBooks = books.some((b) => b.status === 'processando')
+  // Sincronizador ativo em 2º plano para livros sendo sintetizados
+  const isSyncingRef = useRef<Set<string>>(new Set())
   useEffect(() => {
-    if (!hasProcessingBooks) return
+    const processingBooks = books.filter((b) => b.status === 'processando' && b.jobId)
+    if (processingBooks.length === 0) return
+
+    const apiUrl =
+      (typeof window !== 'undefined' ? localStorage.getItem('audiobook_api_url') : null) ||
+      process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL ||
+      'https://api-edge-tts.onrender.com'
+
+    const syncJobs = async () => {
+      for (const pBook of processingBooks) {
+        if (!pBook.jobId || isSyncingRef.current.has(pBook.id)) continue
+        isSyncingRef.current.add(pBook.id)
+        try {
+          const res = await fetch('/api/books/sync-job', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bookId: pBook.id, jobId: pBook.jobId, apiUrl }),
+          })
+          if (res.ok) {
+            const data = await res.json()
+            if (data.updated) {
+              router.refresh()
+            }
+          }
+        } catch (e) {
+          console.warn('[dashboard] Erro ao sincronizar job de áudio:', e)
+        } finally {
+          isSyncingRef.current.delete(pBook.id)
+        }
+      }
+    }
+
+    void syncJobs()
     const interval = setInterval(() => {
-      router.refresh()
-    }, 6000)
+      void syncJobs()
+    }, 7000)
+
     return () => clearInterval(interval)
-  }, [hasProcessingBooks, router])
+  }, [books, router])
 
   const visibleBooks = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase('pt-BR')

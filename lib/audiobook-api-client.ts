@@ -82,9 +82,15 @@ export class AudiobookApiClient {
 
   private async fetchAudioBlob(url: string, signal?: AbortSignal): Promise<Blob> {
     const resolved = this.resolveUrl(url)
-    const res = await fetch(resolved, { signal })
+    const sep = resolved.includes('?') ? '&' : '?'
+    const freshUrl = `${resolved}${sep}_t=${Date.now()}`
+    const res = await fetch(freshUrl, {
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache, no-store' },
+      signal,
+    })
     if (!res.ok) {
-      throw new Error(`Não foi possível baixar o áudio da API (${res.status} ${res.statusText}). URL: ${resolved}`)
+      throw new Error(`Não foi possível baixar o áudio da API (${res.status} ${res.statusText}). URL: ${freshUrl}`)
     }
     return await res.blob()
   }
@@ -100,9 +106,15 @@ export class AudiobookApiClient {
       words = inlineWords
     } else if (url) {
       const resolved = this.resolveUrl(url)
-      const res = await fetch(resolved, { signal })
+      const sep = resolved.includes('?') ? '&' : '?'
+      const freshUrl = `${resolved}${sep}_t=${Date.now()}`
+      const res = await fetch(freshUrl, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache, no-store' },
+        signal,
+      })
       if (!res.ok) {
-        throw new Error(`Falha ao baixar o mapa de palavras da API (${res.status} ${res.statusText}). URL: ${resolved}`)
+        throw new Error(`Falha ao baixar o mapa de palavras da API (${res.status} ${res.statusText}). URL: ${freshUrl}`)
       }
       const data = await res.json()
       words = Array.isArray(data) ? data : data.words || data.mapa || []

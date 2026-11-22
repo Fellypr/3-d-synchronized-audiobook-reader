@@ -41,6 +41,10 @@ export async function PATCH(request: Request) {
     status?: string
     completedParts?: number
     totalParts?: number
+    audioUrl?: string
+    jsonUrl?: string
+    pdfUrl?: string
+    jobId?: string
   }
   try {
     body = await request.json()
@@ -64,6 +68,18 @@ export async function PATCH(request: Request) {
   }
   if (typeof body.totalParts === 'number') {
     updateFields.totalParts = body.totalParts
+  }
+  if (typeof body.audioUrl === 'string' && body.audioUrl.trim()) {
+    updateFields.audioUrl = body.audioUrl.trim()
+  }
+  if (typeof body.jsonUrl === 'string' && body.jsonUrl.trim()) {
+    updateFields.jsonUrl = body.jsonUrl.trim()
+  }
+  if (typeof body.pdfUrl === 'string' && body.pdfUrl.trim()) {
+    updateFields.pdfUrl = body.pdfUrl.trim()
+  }
+  if (typeof body.jobId === 'string' && body.jobId.trim()) {
+    updateFields.jobId = body.jobId.trim()
   }
 
   const [updated] = await db.update(book)
