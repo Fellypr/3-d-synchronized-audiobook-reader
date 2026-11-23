@@ -108,9 +108,9 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   const [apiUrl, setApiUrl] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('audiobook_api_url')
-      if (saved) return saved
+      if (saved && !saved.includes('onrender.com')) return saved
     }
-    return process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'https://api-edge-tts.onrender.com'
+    return process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'http://147.15.26.202'
   })
   const [showApiConfig, setShowApiConfig] = useState(false)
 
@@ -467,7 +467,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
       abortControllerRef.current = abortController
 
       try {
-        const client = new AudiobookApiClient(apiUrl.trim() || 'https://api-edge-tts.onrender.com')
+        const client = new AudiobookApiClient(apiUrl.trim() || process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'http://147.15.26.202')
 
         const result = await client.processarLivro(
           docFile,
@@ -849,10 +849,26 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                             localStorage.setItem('audiobook_api_url', val)
                           }
                         }}
-                        placeholder="http://127.0.0.1:8000 ou https://api-edge-tts.onrender.com"
+                        placeholder="http://147.15.26.202 ou http://127.0.0.1:8000"
                         className="h-9 border-library-border bg-library-surface text-library-ink text-xs font-mono"
                       />
                       <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            const oracle = 'http://147.15.26.202'
+                            setApiUrl(oracle)
+                            if (typeof window !== 'undefined') localStorage.setItem('audiobook_api_url', oracle)
+                          }}
+                          className={`rounded-lg px-2.5 py-1 text-xs font-medium border transition-colors ${
+                            apiUrl.includes('147.15.26.202')
+                              ? 'border-library-accent bg-library-accent/15 text-library-accent'
+                              : 'border-library-border bg-library-surface text-library-muted hover:text-library-ink'
+                          }`}
+                        >
+                          ⚡ Nuvem Oracle Cloud (147.15.26.202)
+                        </button>
                         <button
                           type="button"
                           disabled={busy}
@@ -868,22 +884,6 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                           }`}
                         >
                           💻 Servidor Local (127.0.0.1:8000)
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => {
-                            const render = 'https://api-edge-tts.onrender.com'
-                            setApiUrl(render)
-                            if (typeof window !== 'undefined') localStorage.setItem('audiobook_api_url', render)
-                          }}
-                          className={`rounded-lg px-2.5 py-1 text-xs font-medium border transition-colors ${
-                            apiUrl.includes('render.com')
-                              ? 'border-library-accent bg-library-accent/15 text-library-accent'
-                              : 'border-library-border bg-library-surface text-library-muted hover:text-library-ink'
-                          }`}
-                        >
-                          ☁️ Nuvem Render (Online)
                         </button>
                       </div>
                       <p className="text-[11px] leading-relaxed text-library-muted">

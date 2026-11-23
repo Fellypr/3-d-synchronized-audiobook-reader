@@ -342,10 +342,11 @@ export function ReaderDashboard({
     const processingBooks = books.filter((b) => b.status === 'processando' && b.jobId)
     if (processingBooks.length === 0) return
 
+    const savedApi = typeof window !== 'undefined' ? localStorage.getItem('audiobook_api_url') : null
     const apiUrl =
-      (typeof window !== 'undefined' ? localStorage.getItem('audiobook_api_url') : null) ||
+      (savedApi && !savedApi.includes('onrender.com') ? savedApi : null) ||
       process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL ||
-      'https://api-edge-tts.onrender.com'
+      'http://147.15.26.202'
 
     const syncJobs = async () => {
       for (const pBook of processingBooks) {

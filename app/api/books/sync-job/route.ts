@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Corpo JSON inválido.' }, { status: 400 })
   }
 
-  const { bookId, jobId, apiUrl = 'https://api-edge-tts.onrender.com' } = body
+  const { bookId, jobId, apiUrl = process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'http://147.15.26.202' } = body
   if (!bookId || !jobId) {
     return NextResponse.json({ error: 'bookId e jobId são obrigatórios.' }, { status: 400 })
   }
@@ -82,7 +82,7 @@ export async function POST(request: Request) {
       success: true,
       updated: false,
       completedParts: partesAtuais,
-      totalParts,
+      totalParts: totalPartes,
       status: existing.status,
     })
   }
@@ -165,7 +165,7 @@ export async function POST(request: Request) {
       success: true,
       updated: true,
       completedParts: novasPartes,
-      totalParts,
+      totalParts: totalPartes,
       status: statusJob,
       durationSeconds: duracaoSegundos,
       book: {

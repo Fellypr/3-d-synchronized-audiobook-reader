@@ -55,7 +55,7 @@ export type ProcessBookResult = {
 export class AudiobookApiClient {
   private baseUrl: string
 
-  constructor(baseUrl = process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'https://api-edge-tts.onrender.com') {
+  constructor(baseUrl = process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'http://147.15.26.202') {
     this.baseUrl = baseUrl.replace(/\/+$/, '')
   }
 
