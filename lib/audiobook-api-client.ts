@@ -198,33 +198,129 @@ export class AudiobookApiClient {
     })
 
     // 1. Inicia o Job (retorno imediato na API v2.0)
-    let response: Response
-    try {
-      response = await fetch(`${this.baseUrl}/processar-livro/`, {
-        method: 'POST',
-        body: formData,
-        signal,
+    let jobData: any = null
+    const CHUNK_SIZE = 3 * 1024 * 1024 // 3 MB por fatia (garante ficar abaixo do teto de 4.5 MB da Vercel)
+
+    // Se o arquivo for maior que 3.5 MB e estiver usando o proxy interno, faz upload fatiado (chunked)
+    if (file.size > 3.5 * 1024 * 1024 && this.baseUrl.includes('/api/audiobook')) {
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
+      const uploadId = `upl_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+
+      onLog?.({
+        tipo: 'log',
+        nivel: 'INFO',
+        mensagem: `Arquivo de ${(file.size / (1024 * 1024)).toFixed(2)} MB excede o limite da Vercel. Fatiando em ${totalChunks} partes de 3 MB para envio seguro...`,
+        tempo: new Date().toLocaleTimeString('pt-BR'),
       })
-    } catch (fetchErr: any) {
-      if (fetchErr?.name === 'AbortError') {
-        throw fetchErr
+
+      for (let i = 0; i < totalChunks; i++) {
+        if (signal?.aborted) {
+          throw new DOMException('Operação cancelada', 'AbortError')
+        }
+
+        const start = i * CHUNK_SIZE
+        const end = Math.min(file.size, start + CHUNK_SIZE)
+        const chunkBlob = file.slice(start, end)
+
+        const chunkFormData = new FormData()
+        chunkFormData.append('upload_id', uploadId)
+        chunkFormData.append('chunk_index', String(i))
+        chunkFormData.append('total_chunks', String(totalChunks))
+        chunkFormData.append('filename', file.name)
+        chunkFormData.append('chunk', chunkBlob)
+
+        // Parâmetros repassados junto com as fatias
+        chunkFormData.append('voz', voz)
+        chunkFormData.append('rate', rate)
+        chunkFormData.append('pitch', pitch)
+        if (termoCabecalho?.trim()) chunkFormData.append('termo_cabecalho', termoCabecalho.trim())
+        if (options.paginaInicial && options.paginaInicial > 0) {
+          chunkFormData.append('pagina_inicial', String(options.paginaInicial))
+        }
+        if (options.paginaFinal && options.paginaFinal > 0) {
+          chunkFormData.append('pagina_final', String(options.paginaFinal))
+        }
+
+        const pct = Math.round(((i + 1) / totalChunks) * 10)
+        onProgress?.({
+          tipo: 'progresso',
+          porcentagem: pct,
+          mensagem: `Enviando fatia ${i + 1} de ${totalChunks}...`,
+        })
+        onLog?.({
+          tipo: 'log',
+          nivel: 'INFO',
+          mensagem: `Enviando fatia ${i + 1}/${totalChunks} (${(chunkBlob.size / (1024 * 1024)).toFixed(2)} MB)...`,
+          tempo: new Date().toLocaleTimeString('pt-BR'),
+        })
+
+        let chunkResponse: Response | null = null
+        for (let tentativa = 1; tentativa <= 3; tentativa++) {
+          try {
+            chunkResponse = await fetch('/api/audiobook/upload-chunk', {
+              method: 'POST',
+              body: chunkFormData,
+              signal,
+            })
+            if (chunkResponse.ok) break
+          } catch (chunkErr: any) {
+            if (chunkErr?.name === 'AbortError') throw chunkErr
+            if (tentativa === 3) throw chunkErr
+            await new Promise((r) => setTimeout(r, 1000 * tentativa))
+          }
+        }
+
+        if (!chunkResponse || !chunkResponse.ok) {
+          let errorMsg = `Erro no envio da fatia ${i + 1}: ${chunkResponse?.status} ${chunkResponse?.statusText}`
+          try {
+            const errJson = await chunkResponse?.json()
+            if (errJson?.detail) errorMsg = errJson.detail
+          } catch {}
+          throw new Error(errorMsg)
+        }
+
+        const chunkJson = await chunkResponse.json()
+        if (chunkJson.complete) {
+          jobData = chunkJson
+        }
       }
-      const msg = fetchErr?.message || String(fetchErr)
-      throw new Error(`Falha de conexão com a API: ${msg}. Verifique se o servidor está ativo em ${this.baseUrl}`)
-    }
 
-    if (!response.ok) {
-      let errorMsg = `Erro na API: ${response.status} ${response.statusText}`
+      onLog?.({
+        tipo: 'log',
+        nivel: 'SUCCESS',
+        mensagem: 'Todas as fatias enviadas e remontadas na nuvem! Iniciando túnel de logs...',
+        tempo: new Date().toLocaleTimeString('pt-BR'),
+      })
+    } else {
+      // Envio direto padrão para arquivos menores que 3.5 MB ou conexões diretas
+      let response: Response
       try {
-        const errJson = await response.json()
-        if (errJson?.detail) errorMsg = errJson.detail
-        else if (errJson?.mensagem) errorMsg = errJson.mensagem
-        else if (errJson?.error) errorMsg = errJson.error
-      } catch {}
-      throw new Error(errorMsg)
-    }
+        response = await fetch(`${this.baseUrl}/processar-livro/`, {
+          method: 'POST',
+          body: formData,
+          signal,
+        })
+      } catch (fetchErr: any) {
+        if (fetchErr?.name === 'AbortError') {
+          throw fetchErr
+        }
+        const msg = fetchErr?.message || String(fetchErr)
+        throw new Error(`Falha de conexão com a API: ${msg}. Verifique se o servidor está ativo em ${this.baseUrl}`)
+      }
 
-    const jobData = await response.json()
+      if (!response.ok) {
+        let errorMsg = `Erro na API: ${response.status} ${response.statusText}`
+        try {
+          const errJson = await response.json()
+          if (errJson?.detail) errorMsg = errJson.detail
+          else if (errJson?.mensagem) errorMsg = errJson.mensagem
+          else if (errJson?.error) errorMsg = errJson.error
+        } catch {}
+        throw new Error(errorMsg)
+      }
+
+      jobData = await response.json()
+    }
     const jobId = jobData.job_id || ''
     const title = jobData.nome_livro || file.name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ')
 
