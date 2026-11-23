@@ -55,8 +55,17 @@ export type ProcessBookResult = {
 export class AudiobookApiClient {
   private baseUrl: string
 
-  constructor(baseUrl = process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'http://147.15.26.202') {
-    this.baseUrl = baseUrl.replace(/\/+$/, '')
+  constructor(baseUrl?: string) {
+    const rawUrl = baseUrl || process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'http://147.15.26.202'
+    // Se estamos no navegador e a URL aponta para a Oracle VPS (ou não foi informada),
+    // usamos o proxy BFF do Next.js (/api/audiobook) para evitar Mixed Content, bloqueios de IP e erros de CORS
+    if (typeof window !== 'undefined') {
+      if (!baseUrl || rawUrl.includes('147.15.26.202')) {
+        this.baseUrl = '/api/audiobook'
+        return
+      }
+    }
+    this.baseUrl = rawUrl.replace(/\/+$/, '')
   }
 
   /**
@@ -65,9 +74,19 @@ export class AudiobookApiClient {
   private resolveUrl(url?: string): string {
     if (!url) return ''
     let resolved = url.trim()
-    if (!resolved.startsWith('http://') && !resolved.startsWith('https://')) {
-      resolved = new URL(resolved.startsWith('/') ? resolved : `/${resolved}`, this.baseUrl).toString()
+
+    // Se a URL contiver o IP direto da Oracle VPS, reescreve para o proxy seguro do Next.js
+    if (resolved.includes('147.15.26.202')) {
+      resolved = resolved.replace(/^https?:\/\/147\.15\.26\.202(:\d+)?/i, '/api/audiobook')
+    } else if (!resolved.startsWith('http://') && !resolved.startsWith('https://')) {
+      if (this.baseUrl.startsWith('/')) {
+        const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
+        resolved = new URL(resolved.startsWith('/') ? resolved : `/${resolved}`, `${origin}${this.baseUrl}`).toString()
+      } else {
+        resolved = new URL(resolved.startsWith('/') ? resolved : `/${resolved}`, this.baseUrl).toString()
+      }
     }
+
     // Converte http para https se o navegador estiver em https OU se a baseUrl do serviço for https
     // (evita que requisições no localhost recebam redirect 301 de HTTP para HTTPS que quebram CORS no navegador)
     if (resolved.startsWith('http://')) {

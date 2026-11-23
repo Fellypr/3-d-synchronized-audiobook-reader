@@ -25,7 +25,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Corpo JSON inválido.' }, { status: 400 })
   }
 
-  const { bookId, jobId, apiUrl = process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'http://147.15.26.202' } = body
+  const { bookId, jobId, apiUrl } = body
+  const fallbackApiUrl = process.env.AUDIOBOOK_API_URL || process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'http://147.15.26.202'
+  const rawApiUrl = apiUrl && !apiUrl.startsWith('/') && !apiUrl.includes('/api/audiobook')
+    ? apiUrl
+    : fallbackApiUrl
+  const cleanApiUrl = rawApiUrl.replace(/\/+$/, '')
+
   if (!bookId || !jobId) {
     return NextResponse.json({ error: 'bookId e jobId são obrigatórios.' }, { status: 400 })
   }
@@ -47,7 +53,6 @@ export async function POST(request: Request) {
   }
 
   // Consulta o status do job na API de áudio
-  const cleanApiUrl = apiUrl.replace(/\/+$/, '')
   const statusEndpoint = `${cleanApiUrl}/status/${encodeURIComponent(jobId)}?_t=${Date.now()}`
 
   let statusData: any = null
