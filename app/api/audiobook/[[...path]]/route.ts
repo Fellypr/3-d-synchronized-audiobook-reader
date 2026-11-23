@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+export const dynamic = 'force-dynamic'
+export const maxDuration = 300
+
 const TARGET_API_URL = (
   process.env.AUDIOBOOK_API_URL ||
   process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL ||
@@ -16,7 +19,13 @@ async function handleProxy(request: NextRequest, pathSegments?: string[]) {
   const requestHeaders = new Headers()
   request.headers.forEach((val, key) => {
     const lowerKey = key.toLowerCase()
-    if (lowerKey !== 'host' && lowerKey !== 'connection' && lowerKey !== 'content-length') {
+    // Filtra headers de salto e de transporte para não conflitar com a requisição do Node
+    if (
+      lowerKey !== 'host' &&
+      lowerKey !== 'connection' &&
+      lowerKey !== 'content-length' &&
+      lowerKey !== 'transfer-encoding'
+    ) {
       requestHeaders.set(key, val)
     }
   })
@@ -27,9 +36,22 @@ async function handleProxy(request: NextRequest, pathSegments?: string[]) {
     redirect: 'follow',
   }
 
+  // Para POST e uploads (multipart/form-data):
+  // Buffera os bytes completamente em memória para calcular o Content-Length exato.
+  // Isso evita erros de 'chunked stream desync' e 'fetch failed' típicos do undici no Node.js.
   if (request.method !== 'GET' && request.method !== 'HEAD') {
-    fetchOptions.body = request.body
-    fetchOptions.duplex = 'half'
+    try {
+      const arrayBuffer = await request.arrayBuffer()
+      const buffer = Buffer.from(arrayBuffer)
+      fetchOptions.body = buffer
+      requestHeaders.set('content-length', String(buffer.length))
+    } catch (readErr: any) {
+      console.error('[AudiobookProxy Error] Falha ao ler corpo da requisição:', readErr)
+      return NextResponse.json(
+        { detail: `Falha ao receber o arquivo no servidor: ${readErr?.message || String(readErr)}` },
+        { status: 400 }
+      )
+    }
   }
 
   try {
@@ -38,7 +60,7 @@ async function handleProxy(request: NextRequest, pathSegments?: string[]) {
     const responseHeaders = new Headers()
     res.headers.forEach((val, key) => {
       const lowerKey = key.toLowerCase()
-      // Não propagar encoding ou content-length alterados se o stream foi decodificado
+      // Não propagar encoding se o payload já foi tratado
       if (lowerKey !== 'content-encoding') {
         responseHeaders.set(key, val)
       }
@@ -58,10 +80,12 @@ async function handleProxy(request: NextRequest, pathSegments?: string[]) {
       headers: responseHeaders,
     })
   } catch (err: any) {
-    console.error(`[AudiobookProxy Error] Falha ao comunicar com ${targetUrl}:`, err)
+    const causeMsg = err?.cause?.message || err?.cause?.code || (err?.cause ? String(err.cause) : '')
+    const fullMsg = causeMsg ? `${err.message} (${causeMsg})` : err?.message || String(err)
+    console.error(`[AudiobookProxy Error] Falha ao comunicar com ${targetUrl}:`, fullMsg, err)
     return NextResponse.json(
       {
-        detail: `Falha de conexão com a API de Audiolivros: ${err?.message || String(err)}. Verifique se o servidor remoto está ativo em ${TARGET_API_URL}`,
+        detail: `Falha de conexão com a API de Audiolivros: ${fullMsg}. Verifique se o servidor remoto está ativo em ${TARGET_API_URL}`,
       },
       { status: 502 }
     )
