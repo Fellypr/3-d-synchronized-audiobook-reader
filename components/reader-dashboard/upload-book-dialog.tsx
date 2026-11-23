@@ -478,6 +478,12 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
             paginaInicial: pIni && !isNaN(pIni) ? pIni : undefined,
             paginaFinal: pFim && !isNaN(pFim) ? pFim : undefined,
             signal: abortController.signal,
+            uploadBlobFn: async (file, onProgress) => {
+              const userFolder = activeUserId ? `temp_docs/${activeUserId}` : 'temp_docs'
+              const sanitizedName = file.name.replace(/[^a-z0-9_.-]+/gi, '_')
+              const path = `${userFolder}/${Date.now()}_${sanitizedName}`
+              return await uploadToBlob(path, file, onProgress)
+            },
             onLog: (log) => {
               addLog(log.mensagem, log.nivel || 'INFO')
             },

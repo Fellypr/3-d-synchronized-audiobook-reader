@@ -37,6 +37,7 @@ export type ProcessBookOptions = {
   onPartialReady?: (data: ProcessBookResult) => void
   onBlockReady?: (blockData: ProcessBookResult & { completedParts: number; totalParts: number; blockIndex: number; totalBlocks: number }) => void
   onCooldown?: (data: { seconds: number; nextBlock: number; totalBlocks: number; completedParts: number; totalParts: number; remainingParts: number }) => void
+  uploadBlobFn?: (file: File, onProgress?: (percentage: number) => void) => Promise<{ url: string }>
   signal?: AbortSignal
 }
 
@@ -199,98 +200,63 @@ export class AudiobookApiClient {
 
     // 1. Inicia o Job (retorno imediato na API v2.0)
     let jobData: any = null
-    const CHUNK_SIZE = 3 * 1024 * 1024 // 3 MB por fatia (garante ficar abaixo do teto de 4.5 MB da Vercel)
 
-    // Se o arquivo for maior que 3.5 MB e estiver usando o proxy interno, faz upload fatiado (chunked)
-    if (file.size > 3.5 * 1024 * 1024 && this.baseUrl.includes('/api/audiobook')) {
-      const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
-      const uploadId = `upl_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+    // Se o arquivo for maior que 3.5 MB e houver função de upload para o Vercel Blob configurada,
+    // usamos o pipeline de alta capacidade (upload direto para o Blob -> relay server-to-server para a VPS).
+    // Isso contorna 100% o limite rígido de 4.5 MB do corpo de requisição da Vercel.
+    if (file.size > 3.5 * 1024 * 1024 && options.uploadBlobFn) {
+      onLog?.({
+        tipo: 'log',
+        nivel: 'INFO',
+        mensagem: `Arquivo de ${(file.size / (1024 * 1024)).toFixed(2)} MB excede o teto da Vercel (4.5 MB). Enviando via Vercel Blob de alta capacidade...`,
+        tempo: new Date().toLocaleTimeString('pt-BR'),
+      })
+      onStatusUpdate?.('Enviando documento para a nuvem...')
+
+      const blobResult = await options.uploadBlobFn(file, (percentage) => {
+        onProgress?.({
+          tipo: 'progresso',
+          porcentagem: Math.round(percentage * 0.15),
+          mensagem: `Enviando documento para o armazenamento (${percentage}%)...`,
+        })
+      })
 
       onLog?.({
         tipo: 'log',
         nivel: 'INFO',
-        mensagem: `Arquivo de ${(file.size / (1024 * 1024)).toFixed(2)} MB excede o limite da Vercel. Fatiando em ${totalChunks} partes de 3 MB para envio seguro...`,
+        mensagem: 'Documento gravado na nuvem. Repassando para o motor de IA na VPS...',
         tempo: new Date().toLocaleTimeString('pt-BR'),
       })
+      onStatusUpdate?.('Iniciando síntese na nuvem...')
 
-      for (let i = 0; i < totalChunks; i++) {
-        if (signal?.aborted) {
-          throw new DOMException('Operação cancelada', 'AbortError')
-        }
+      const relayResponse = await fetch('/api/audiobook/relay-blob', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          blobUrl: blobResult.url,
+          filename: file.name,
+          voz,
+          rate,
+          pitch,
+          termoCabecalho,
+          paginaInicial: options.paginaInicial,
+          paginaFinal: options.paginaFinal,
+        }),
+        signal,
+      })
 
-        const start = i * CHUNK_SIZE
-        const end = Math.min(file.size, start + CHUNK_SIZE)
-        const chunkBlob = file.slice(start, end)
-
-        const chunkFormData = new FormData()
-        chunkFormData.append('upload_id', uploadId)
-        chunkFormData.append('chunk_index', String(i))
-        chunkFormData.append('total_chunks', String(totalChunks))
-        chunkFormData.append('filename', file.name)
-        chunkFormData.append('chunk', chunkBlob)
-
-        // Parâmetros repassados junto com as fatias
-        chunkFormData.append('voz', voz)
-        chunkFormData.append('rate', rate)
-        chunkFormData.append('pitch', pitch)
-        if (termoCabecalho?.trim()) chunkFormData.append('termo_cabecalho', termoCabecalho.trim())
-        if (options.paginaInicial && options.paginaInicial > 0) {
-          chunkFormData.append('pagina_inicial', String(options.paginaInicial))
-        }
-        if (options.paginaFinal && options.paginaFinal > 0) {
-          chunkFormData.append('pagina_final', String(options.paginaFinal))
-        }
-
-        const pct = Math.round(((i + 1) / totalChunks) * 10)
-        onProgress?.({
-          tipo: 'progresso',
-          porcentagem: pct,
-          mensagem: `Enviando fatia ${i + 1} de ${totalChunks}...`,
-        })
-        onLog?.({
-          tipo: 'log',
-          nivel: 'INFO',
-          mensagem: `Enviando fatia ${i + 1}/${totalChunks} (${(chunkBlob.size / (1024 * 1024)).toFixed(2)} MB)...`,
-          tempo: new Date().toLocaleTimeString('pt-BR'),
-        })
-
-        let chunkResponse: Response | null = null
-        for (let tentativa = 1; tentativa <= 3; tentativa++) {
-          try {
-            chunkResponse = await fetch('/api/audiobook/upload-chunk', {
-              method: 'POST',
-              body: chunkFormData,
-              signal,
-            })
-            if (chunkResponse.ok) break
-          } catch (chunkErr: any) {
-            if (chunkErr?.name === 'AbortError') throw chunkErr
-            if (tentativa === 3) throw chunkErr
-            await new Promise((r) => setTimeout(r, 1000 * tentativa))
-          }
-        }
-
-        if (!chunkResponse || !chunkResponse.ok) {
-          let errorMsg = `Erro no envio da fatia ${i + 1}: ${chunkResponse?.status} ${chunkResponse?.statusText}`
-          try {
-            const errJson = await chunkResponse?.json()
-            if (errJson?.detail) errorMsg = errJson.detail
-          } catch {}
-          throw new Error(errorMsg)
-        }
-
-        const chunkJson = await chunkResponse.json()
-        if (chunkJson.complete) {
-          jobData = chunkJson
-        }
+      if (!relayResponse.ok) {
+        let errorMsg = `Erro no relay: ${relayResponse.status} ${relayResponse.statusText}`
+        try {
+          const errJson = await relayResponse.json()
+          if (errJson?.detail) errorMsg = errJson.detail
+          else if (errJson?.mensagem) errorMsg = errJson.mensagem
+          else if (errJson?.error) errorMsg = errJson.error
+        } catch {}
+        throw new Error(errorMsg)
       }
 
-      onLog?.({
-        tipo: 'log',
-        nivel: 'SUCCESS',
-        mensagem: 'Todas as fatias enviadas e remontadas na nuvem! Iniciando túnel de logs...',
-        tempo: new Date().toLocaleTimeString('pt-BR'),
-      })
+      jobData = await relayResponse.json()
     } else {
       // Envio direto padrão para arquivos menores que 3.5 MB ou conexões diretas
       let response: Response
@@ -321,7 +287,10 @@ export class AudiobookApiClient {
 
       jobData = await response.json()
     }
-    const jobId = jobData.job_id || ''
+    const jobId = jobData?.job_id || ''
+    if (!jobId) {
+      throw new Error('A API não retornou o identificador da tarefa (job_id).')
+    }
     const title = jobData.nome_livro || file.name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ')
 
     // Se a API não retornou stream_url (ex: resposta v1 síncrona legada), realiza download direto
