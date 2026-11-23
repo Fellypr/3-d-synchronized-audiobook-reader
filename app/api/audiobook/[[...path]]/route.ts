@@ -72,6 +72,7 @@ async function handleProxy(request: NextRequest, pathSegments?: string[]) {
       responseHeaders.set('Cache-Control', 'no-cache, no-transform')
       responseHeaders.set('Connection', 'keep-alive')
       responseHeaders.set('X-Accel-Buffering', 'no')
+      responseHeaders.delete('content-length')
     }
 
     return new Response(res.body, {

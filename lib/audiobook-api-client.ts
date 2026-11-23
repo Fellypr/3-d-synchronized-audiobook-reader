@@ -506,28 +506,16 @@ export class AudiobookApiClient {
         }
       }
 
-      canalLogs.onmessage = (event) => {
-        void handleRawMessage(event.data)
-      }
+      let sseRetries = 0
+      const maxSseRetries = 3
 
-      // Suporte para eventos SSE nomeados caso a API use "event: log" etc
-      canalLogs.addEventListener('log', (event: any) => void handleRawMessage(event.data))
-      canalLogs.addEventListener('progresso', (event: any) => void handleRawMessage(event.data))
-      canalLogs.addEventListener('bloco_concluido', (event: any) => void handleRawMessage(event.data))
-      canalLogs.addEventListener('cooldown', (event: any) => void handleRawMessage(event.data))
-      canalLogs.addEventListener('liberado_parcial', (event: any) => void handleRawMessage(event.data))
-      canalLogs.addEventListener('concluido', (event: any) => void handleRawMessage(event.data))
-      canalLogs.addEventListener('erro', (event: any) => void handleRawMessage(event.data))
-
-      canalLogs.onerror = (err) => {
+      const startPollingFallback = () => {
         if (isSettled) return
-        closeEventSource()
-        console.warn('Conexão com túnel SSE oscilou. Ativando fallback resiliente via polling...', err)
 
         onLog?.({
           tipo: 'log',
           nivel: 'WARN',
-          mensagem: 'Túnel de logs SSE oscilou. Alternando automaticamente para monitoramento de status da API...',
+          mensagem: 'Túnel de logs SSE oscilou. Alternando automaticamente para monitoramento resiliente de status...',
           tempo: new Date().toLocaleTimeString('pt-BR'),
         })
 
@@ -544,7 +532,7 @@ export class AudiobookApiClient {
         let pollAttempts = 0
         const maxPollAttempts = 1200 // até 60 minutos (3s * 1200)
         let lastReportedPercentage = -1
-        let lastLoggedIndex = 0
+        const seenLogSignatures = new Set<string>()
 
         const pollInterval = setInterval(async () => {
           if (isSettled) {
@@ -571,20 +559,45 @@ export class AudiobookApiClient {
             if (!statusRes.ok) return
             const statusData = await statusRes.json()
 
-            // Transmite logs do servidor se disponíveis
-            if (Array.isArray(statusData.logs_recentes) && statusData.logs_recentes.length > lastLoggedIndex) {
-              const novosLogs = statusData.logs_recentes.slice(lastLoggedIndex)
-              for (const l of novosLogs) {
-                if (l.mensagem) {
-                  onLog?.({
-                    tipo: 'log',
-                    nivel: l.nivel || 'INFO',
-                    mensagem: l.mensagem,
-                    tempo: l.tempo || new Date().toLocaleTimeString('pt-BR'),
-                  })
+            // Transmite logs do servidor usando Set para nunca travar por corte de array
+            if (Array.isArray(statusData.logs_recentes)) {
+              for (const l of statusData.logs_recentes) {
+                const sig = `${l.tempo || ''}|${l.mensagem || ''}`
+                if (!seenLogSignatures.has(sig)) {
+                  seenLogSignatures.add(sig)
+                  if (l.mensagem) {
+                    onLog?.({
+                      tipo: 'log',
+                      nivel: l.nivel || 'INFO',
+                      mensagem: l.mensagem,
+                      tempo: l.tempo || new Date().toLocaleTimeString('pt-BR'),
+                    })
+
+                    // Extrai progresso dinâmico de partes concluídas
+                    const matchProg =
+                      l.mensagem.match(/Sintetizadas\s+(\d+)\s+de\s+(\d+)\s+partes/i) ||
+                      l.mensagem.match(/Parte\s+(\d+)\/(\d+)\s+concluída/i)
+                    if (matchProg) {
+                      const pAtual = parseInt(matchProg[1], 10)
+                      const tPartes = parseInt(matchProg[2], 10)
+                      if (tPartes > 0) {
+                        const pct = Math.min(95, Math.round(10 + (pAtual / tPartes) * 85))
+                        if (pct !== lastReportedPercentage) {
+                          lastReportedPercentage = pct
+                          onProgress?.({
+                            tipo: 'progresso',
+                            porcentagem: pct,
+                            parte_atual: pAtual,
+                            total_partes: tPartes,
+                            mensagem: `Sintetizadas ${pAtual} de ${tPartes} partes (${pct}%)`,
+                          })
+                          onStatusUpdate?.(`Sintetizando partes: ${pAtual}/${tPartes} (${pct}%)...`)
+                        }
+                      }
+                    }
+                  }
                 }
               }
-              lastLoggedIndex = statusData.logs_recentes.length
             }
 
             if (
@@ -617,6 +630,48 @@ export class AudiobookApiClient {
           }
         }, 3000)
       }
+
+      const attachEvents = (source: EventSource) => {
+        source.onmessage = (event) => {
+          void handleRawMessage(event.data)
+        }
+
+        source.addEventListener('log', (event: any) => void handleRawMessage(event.data))
+        source.addEventListener('progresso', (event: any) => void handleRawMessage(event.data))
+        source.addEventListener('bloco_concluido', (event: any) => void handleRawMessage(event.data))
+        source.addEventListener('cooldown', (event: any) => void handleRawMessage(event.data))
+        source.addEventListener('liberado_parcial', (event: any) => void handleRawMessage(event.data))
+        source.addEventListener('concluido', (event: any) => void handleRawMessage(event.data))
+        source.addEventListener('erro', (event: any) => void handleRawMessage(event.data))
+
+        source.onerror = (err) => {
+          if (isSettled) return
+          closeEventSource()
+
+          // Tenta reconectar até 3 vezes antes de desistir para polling
+          if (sseRetries < maxSseRetries) {
+            sseRetries++
+            console.warn(`[SSE] Oscilação transitória. Reconectando (${sseRetries}/${maxSseRetries}) em 2s...`, err)
+            onLog?.({
+              tipo: 'log',
+              nivel: 'WARN',
+              mensagem: `Túnel SSE instável. Reconectando (${sseRetries}/${maxSseRetries})...`,
+              tempo: new Date().toLocaleTimeString('pt-BR'),
+            })
+            setTimeout(() => {
+              if (!isSettled) {
+                canalLogs = new EventSource(streamUrl)
+                attachEvents(canalLogs)
+              }
+            }, 2000)
+            return
+          }
+
+          startPollingFallback()
+        }
+      }
+
+      attachEvents(canalLogs)
     })
   }
 }
