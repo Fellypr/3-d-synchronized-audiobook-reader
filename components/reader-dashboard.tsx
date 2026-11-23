@@ -344,9 +344,9 @@ export function ReaderDashboard({
 
     const savedApi = typeof window !== 'undefined' ? localStorage.getItem('audiobook_api_url') : null
     const apiUrl =
-      (savedApi && !savedApi.includes('onrender.com') ? savedApi : null) ||
+      (savedApi && !savedApi.includes('onrender.com') && !savedApi.includes('147.15.26.202') ? savedApi : null) ||
       process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL ||
-      'http://147.15.26.202'
+      'https://auditeca-api.duckdns.org'
 
     const syncJobs = async () => {
       for (const pBook of processingBooks) {

@@ -27,6 +27,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Not found', details: 'Parâmetro pathname ausente.' }, { status: 404 })
   }
 
+  // Se o caminho já for uma URL absoluta segura (ex: VPS Oracle com HTTPS), redireciona direto
+  if (pathname.startsWith('http://') || pathname.startsWith('https://')) {
+    return NextResponse.redirect(pathname)
+  }
+
   const expectedPrefix = `audiobooks/${session.user.id}/`
   const startsWithUser = pathname.startsWith(expectedPrefix)
 

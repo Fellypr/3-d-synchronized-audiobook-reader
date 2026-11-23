@@ -57,14 +57,11 @@ export class AudiobookApiClient {
   private baseUrl: string
 
   constructor(baseUrl?: string) {
-    const rawUrl = baseUrl || process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'http://147.15.26.202'
-    // Se estamos no navegador e a URL aponta para a Oracle VPS (ou não foi informada),
-    // usamos o proxy BFF do Next.js (/api/audiobook) para evitar Mixed Content, bloqueios de IP e erros de CORS
-    if (typeof window !== 'undefined') {
-      if (!baseUrl || rawUrl.includes('147.15.26.202')) {
-        this.baseUrl = '/api/audiobook'
-        return
-      }
+    const defaultUrl = process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'https://auditeca-api.duckdns.org'
+    let rawUrl = (baseUrl || defaultUrl).trim()
+    // Atualiza automaticamente o IP antigo para o novo domínio HTTPS seguro
+    if (rawUrl.includes('147.15.26.202')) {
+      rawUrl = rawUrl.replace(/^https?:\/\/147\.15\.26\.202(:\d+)?/i, 'https://auditeca-api.duckdns.org')
     }
     this.baseUrl = rawUrl.replace(/\/+$/, '')
   }
@@ -76,9 +73,9 @@ export class AudiobookApiClient {
     if (!url) return ''
     let resolved = url.trim()
 
-    // Se a URL contiver o IP direto da Oracle VPS, reescreve para o proxy seguro do Next.js
+    // Converte IP antigo para o domínio oficial seguro
     if (resolved.includes('147.15.26.202')) {
-      resolved = resolved.replace(/^https?:\/\/147\.15\.26\.202(:\d+)?/i, '/api/audiobook')
+      resolved = resolved.replace(/^https?:\/\/147\.15\.26\.202(:\d+)?/i, 'https://auditeca-api.duckdns.org')
     } else if (!resolved.startsWith('http://') && !resolved.startsWith('https://')) {
       if (this.baseUrl.startsWith('/')) {
         const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
@@ -201,10 +198,10 @@ export class AudiobookApiClient {
     // 1. Inicia o Job (retorno imediato na API v2.0)
     let jobData: any = null
 
-    // Se o arquivo for maior que 3.5 MB e houver função de upload para o Vercel Blob configurada,
+    // Se o arquivo for maior que 3.5 MB e estiver passando pelo proxy interno da Vercel (/api/...),
     // usamos o pipeline de alta capacidade (upload direto para o Blob -> relay server-to-server para a VPS).
-    // Isso contorna 100% o limite rígido de 4.5 MB do corpo de requisição da Vercel.
-    if (file.size > 3.5 * 1024 * 1024 && options.uploadBlobFn) {
+    // Para conexões diretas na VPS (como https://auditeca-api.duckdns.org), o envio direto suporta até 100 MB sem precisar de intermediários.
+    if (file.size > 3.5 * 1024 * 1024 && this.baseUrl.startsWith('/api') && options.uploadBlobFn) {
       onLog?.({
         tipo: 'log',
         nivel: 'INFO',

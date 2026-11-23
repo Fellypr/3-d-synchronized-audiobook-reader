@@ -24,9 +24,17 @@ export async function GET(request: Request) {
   return NextResponse.json({
     book: {
       ...latest,
-      audioUrl: `/api/books/file?pathname=${encodeURIComponent(latest.audioUrl)}`,
-      jsonUrl: `/api/books/file?pathname=${encodeURIComponent(latest.jsonUrl)}`,
-      pdfUrl: latest.pdfUrl ? `/api/books/file?pathname=${encodeURIComponent(latest.pdfUrl)}` : null,
+      audioUrl: latest.audioUrl.startsWith('http://') || latest.audioUrl.startsWith('https://')
+        ? latest.audioUrl
+        : `/api/books/file?pathname=${encodeURIComponent(latest.audioUrl)}`,
+      jsonUrl: latest.jsonUrl.startsWith('http://') || latest.jsonUrl.startsWith('https://')
+        ? latest.jsonUrl
+        : `/api/books/file?pathname=${encodeURIComponent(latest.jsonUrl)}`,
+      pdfUrl: latest.pdfUrl
+        ? (latest.pdfUrl.startsWith('http://') || latest.pdfUrl.startsWith('https://')
+          ? latest.pdfUrl
+          : `/api/books/file?pathname=${encodeURIComponent(latest.pdfUrl)}`)
+        : null,
     },
   })
 }
@@ -182,9 +190,17 @@ export async function POST(request: Request) {
       return NextResponse.json({
         book: {
           ...saved,
-          audioUrl: `/api/books/file?pathname=${encodeURIComponent(saved.audioUrl)}`,
-          jsonUrl: `/api/books/file?pathname=${encodeURIComponent(saved.jsonUrl)}`,
-          pdfUrl: saved.pdfUrl ? `/api/books/file?pathname=${encodeURIComponent(saved.pdfUrl)}` : null,
+          audioUrl: saved.audioUrl.startsWith('http://') || saved.audioUrl.startsWith('https://')
+            ? saved.audioUrl
+            : `/api/books/file?pathname=${encodeURIComponent(saved.audioUrl)}`,
+          jsonUrl: saved.jsonUrl.startsWith('http://') || saved.jsonUrl.startsWith('https://')
+            ? saved.jsonUrl
+            : `/api/books/file?pathname=${encodeURIComponent(saved.jsonUrl)}`,
+          pdfUrl: saved.pdfUrl
+            ? (saved.pdfUrl.startsWith('http://') || saved.pdfUrl.startsWith('https://')
+              ? saved.pdfUrl
+              : `/api/books/file?pathname=${encodeURIComponent(saved.pdfUrl)}`)
+            : null,
         },
       })
     } catch (error) {

@@ -6,7 +6,7 @@ export const maxDuration = 300
 const TARGET_API_URL = (
   process.env.AUDIOBOOK_API_URL ||
   process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL ||
-  'http://147.15.26.202'
+  'https://auditeca-api.duckdns.org'
 ).replace(/\/+$/, '')
 
 async function handleProxy(request: NextRequest, pathSegments?: string[]) {

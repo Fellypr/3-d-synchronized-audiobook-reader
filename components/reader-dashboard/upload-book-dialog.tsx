@@ -108,9 +108,9 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   const [apiUrl, setApiUrl] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('audiobook_api_url')
-      if (saved && !saved.includes('onrender.com')) return saved
+      if (saved && !saved.includes('onrender.com') && !saved.includes('147.15.26.202')) return saved
     }
-    return process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'http://147.15.26.202'
+    return process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'https://auditeca-api.duckdns.org'
   })
   const [showApiConfig, setShowApiConfig] = useState(false)
 
@@ -295,7 +295,16 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     } catch (directErr) {
       directError = directErr instanceof Error ? directErr : new Error(String(directErr))
       console.warn('[upload] Direct client upload failed, tentando fallback:', directErr)
-      addLog(`Aviso no upload direto, utilizando canal do servidor: ${directError.message}`, 'WARN')
+      addLog(`Aviso no upload para o Vercel Blob: ${directError.message}`, 'WARN')
+
+      // Se tivermos jobId do processamento na nuvem, usamos os arquivos já gerados e armazenados permanentemente na VPS!
+      if (extraMeta?.jobId) {
+        addLog('Utilizando armazenamento dedicado na nuvem da VPS para o áudio e mapa...', 'INFO')
+        const serverOrigin = (apiUrl.trim() || 'https://auditeca-api.duckdns.org').replace(/\/+$/, '')
+        directAudioPathname = `${serverOrigin}/download/${extraMeta.jobId}/audio`
+        directJsonPathname = `${serverOrigin}/download/${extraMeta.jobId}/mapa`
+        usedDirectUpload = true
+      }
     }
 
     if (usedDirectUpload) {
@@ -467,7 +476,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
       abortControllerRef.current = abortController
 
       try {
-        const client = new AudiobookApiClient(apiUrl.trim() || process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'http://147.15.26.202')
+        const client = new AudiobookApiClient(apiUrl.trim() || process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'https://auditeca-api.duckdns.org')
 
         const result = await client.processarLivro(
           docFile,
@@ -855,7 +864,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                             localStorage.setItem('audiobook_api_url', val)
                           }
                         }}
-                        placeholder="http://147.15.26.202 ou http://127.0.0.1:8000"
+                        placeholder="https://auditeca-api.duckdns.org ou http://127.0.0.1:8000"
                         className="h-9 border-library-border bg-library-surface text-library-ink text-xs font-mono"
                       />
                       <div className="flex flex-wrap gap-2 pt-1">
@@ -863,17 +872,17 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                           type="button"
                           disabled={busy}
                           onClick={() => {
-                            const oracle = 'http://147.15.26.202'
-                            setApiUrl(oracle)
-                            if (typeof window !== 'undefined') localStorage.setItem('audiobook_api_url', oracle)
+                            const cloud = 'https://auditeca-api.duckdns.org'
+                            setApiUrl(cloud)
+                            if (typeof window !== 'undefined') localStorage.setItem('audiobook_api_url', cloud)
                           }}
                           className={`rounded-lg px-2.5 py-1 text-xs font-medium border transition-colors ${
-                            apiUrl.includes('147.15.26.202')
+                            apiUrl.includes('auditeca-api') || apiUrl.includes('147.15.26.202')
                               ? 'border-library-accent bg-library-accent/15 text-library-accent'
                               : 'border-library-border bg-library-surface text-library-muted hover:text-library-ink'
                           }`}
                         >
-                          ⚡ Nuvem Oracle Cloud (147.15.26.202)
+                          ⚡ Nuvem Oracle HTTPS (auditeca-api.duckdns.org)
                         </button>
                         <button
                           type="button"
