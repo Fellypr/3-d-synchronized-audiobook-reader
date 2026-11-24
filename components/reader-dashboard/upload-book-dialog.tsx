@@ -267,6 +267,23 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     let directPdfPathname = ''
     let directError: Error | null = null
 
+    async function uploadToVpsBiblioteca(targetFilename: string, file: File): Promise<string> {
+      const serverOrigin = (apiUrl.trim() || 'https://auditeca-api.duckdns.org').replace(/\/+$/, '')
+      const fd = new FormData()
+      fd.append('user_id', activeUserId || 'default')
+      fd.append('filename', targetFilename)
+      fd.append('file', file)
+      const res = await fetch(`${serverOrigin}/biblioteca/upload`, {
+        method: 'POST',
+        body: fd,
+      })
+      if (!res.ok) {
+        throw new Error(`Falha ao enviar ${targetFilename} para a VPS (${res.status})`)
+      }
+      const data = await res.json()
+      return data.url
+    }
+
     try {
       if (pdfFile) {
         const pdfExt = pdfFile.name.split('.').pop()?.toLowerCase() || 'pdf'
@@ -294,16 +311,31 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
       usedDirectUpload = true
     } catch (directErr) {
       directError = directErr instanceof Error ? directErr : new Error(String(directErr))
-      console.warn('[upload] Direct client upload failed, tentando fallback:', directErr)
-      addLog(`Aviso no upload para o Vercel Blob: ${directError.message}`, 'WARN')
+      console.warn('[upload] Direct client upload failed, tentando fallback VPS:', directErr)
+      addLog(`Aviso no Vercel Blob (${directError.message}). Salvando diretamente na VPS...`, 'WARN')
 
-      // Se tivermos jobId do processamento na nuvem, usamos os arquivos já gerados e armazenados permanentemente na VPS!
-      if (extraMeta?.jobId) {
-        addLog('Utilizando armazenamento dedicado na nuvem da VPS para o áudio e mapa...', 'INFO')
-        const serverOrigin = (apiUrl.trim() || 'https://auditeca-api.duckdns.org').replace(/\/+$/, '')
-        directAudioPathname = `${serverOrigin}/download/${extraMeta.jobId}/audio`
-        directJsonPathname = `${serverOrigin}/download/${extraMeta.jobId}/mapa`
-        usedDirectUpload = true
+      try {
+        if (pdfFile && !directPdfPathname) {
+          const pdfExt = pdfFile.name.split('.').pop()?.toLowerCase() || 'pdf'
+          setUploadStatus('Salvando PDF na VPS...')
+          directPdfPathname = await uploadToVpsBiblioteca(`${sanitizedName}.${pdfExt}`, pdfFile)
+        }
+
+        if (extraMeta?.jobId) {
+          addLog('Utilizando armazenamento dedicado na nuvem da VPS para o áudio e mapa...', 'INFO')
+          const serverOrigin = (apiUrl.trim() || 'https://auditeca-api.duckdns.org').replace(/\/+$/, '')
+          directAudioPathname = `${serverOrigin}/download/${extraMeta.jobId}/audio`
+          directJsonPathname = `${serverOrigin}/download/${extraMeta.jobId}/mapa`
+          usedDirectUpload = true
+        } else {
+          setUploadStatus('Enviando mapa e áudio para a VPS...')
+          directJsonPathname = await uploadToVpsBiblioteca(`${sanitizedName}.json`, jsonFile)
+          directAudioPathname = await uploadToVpsBiblioteca(`${sanitizedName}.${audioExt}`, audioFile)
+          usedDirectUpload = true
+        }
+      } catch (vpsErr: any) {
+        console.error('[upload] VPS biblioteca fallback failed:', vpsErr)
+        addLog(`Erro ao salvar na VPS: ${vpsErr?.message || vpsErr}`, 'ERROR')
       }
     }
 

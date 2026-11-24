@@ -68,9 +68,13 @@ export async function GET(request: Request) {
     return await serveAudiobookFile(pathname, request)
   } catch (error) {
     console.error('[api/books/file] Error serving file:', error)
+    const msg = error instanceof Error ? error.message : String(error)
+    const isSuspended = msg.toLowerCase().includes('suspended')
     return NextResponse.json({
-      error: 'File delivery failed',
-      details: error instanceof Error ? error.message : String(error),
-    }, { status: 500 })
+      error: isSuspended ? 'Armazenamento Vercel Blob suspenso' : 'File delivery failed',
+      details: isSuspended
+        ? 'O armazenamento Vercel Blob atingiu o limite da cota e foi suspenso pela Vercel. Os arquivos desse livro precisam ser migrados ou reenviados para a VPS.'
+        : msg,
+    }, { status: isSuspended ? 503 : 500 })
   }
 }
