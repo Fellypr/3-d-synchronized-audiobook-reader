@@ -81,7 +81,7 @@ export function BookListItem({ book, isLastRead, view, onDeleted }: BookListItem
     book.status === 'processando' ? (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-medium text-amber-500 border border-amber-500/30">
         <span className="size-1.5 rounded-full bg-amber-400 animate-pulse" />
-        {book.completedParts && book.totalParts
+        {typeof book.completedParts === 'number' && typeof book.totalParts === 'number' && book.totalParts > 0
           ? `2º plano (${book.completedParts}/${book.totalParts})`
           : 'Gerando áudio...'}
       </span>

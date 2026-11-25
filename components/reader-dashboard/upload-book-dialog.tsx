@@ -537,6 +537,33 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
             onStatusUpdate: (status) => {
               setUploadStatus(status)
             },
+            onJobCreated: async ({ jobId, totalPartes }) => {
+              const serverOrigin = (apiUrl.trim() || process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'https://auditeca-api.duckdns.org').replace(/\/+$/, '')
+              addLog(`⚡ Tarefa iniciada na nuvem (Job: ${jobId}). Gravando na estante...`, 'SUCCESS')
+              try {
+                const saveRes = await fetch('/api/books', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    name,
+                    coverUrl: coverUrl.trim() || undefined,
+                    audioUrl: `${serverOrigin}/download/${jobId}/audio`,
+                    jsonUrl: `${serverOrigin}/download/${jobId}/mapa`,
+                    status: 'processando',
+                    jobId,
+                    completedParts: 0,
+                    totalParts: totalPartes || 0,
+                  }),
+                })
+                if (saveRes.ok) {
+                  addLog('📖 Livro gravado na estante com sucesso! Você já pode fechar esta janela ou navegar; o progresso continuará visível no sino do topo.', 'SUCCESS')
+                  setUploadStatus('Processamento ativo em 2º plano na nuvem. Você já pode fechar esta tela ou acompanhar pelo sino no topo.')
+                  onAdded()
+                }
+              } catch (initialSaveErr) {
+                console.warn('Erro ao pré-registrar livro na estante:', initialSaveErr)
+              }
+            },
             onBlockReady: async (blockData) => {
               const pConcluidas = blockData.completedParts
               const tPartes = blockData.totalParts

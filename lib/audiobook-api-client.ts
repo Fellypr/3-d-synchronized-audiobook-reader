@@ -37,6 +37,7 @@ export type ProcessBookOptions = {
   onPartialReady?: (data: ProcessBookResult) => void
   onBlockReady?: (blockData: ProcessBookResult & { completedParts: number; totalParts: number; blockIndex: number; totalBlocks: number }) => void
   onCooldown?: (data: { seconds: number; nextBlock: number; totalBlocks: number; completedParts: number; totalParts: number; remainingParts: number }) => void
+  onJobCreated?: (data: { jobId: string; nomeLivro?: string; totalPartes?: number }) => Promise<void> | void
   uploadBlobFn?: (file: File, onProgress?: (percentage: number) => void) => Promise<{ url: string }>
   signal?: AbortSignal
 }
@@ -289,6 +290,18 @@ export class AudiobookApiClient {
       throw new Error('A API não retornou o identificador da tarefa (job_id).')
     }
     const title = jobData.nome_livro || file.name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ')
+
+    if (options.onJobCreated) {
+      try {
+        await options.onJobCreated({
+          jobId,
+          nomeLivro: title,
+          totalPartes: Number(jobData.total_partes) || 0,
+        })
+      } catch (jobCreatedErr) {
+        console.warn('[AudiobookApiClient] Erro no callback onJobCreated:', jobCreatedErr)
+      }
+    }
 
     // Se a API não retornou stream_url (ex: resposta v1 síncrona legada), realiza download direto
     if (!jobData.stream_url) {

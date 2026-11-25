@@ -10,6 +10,7 @@ import { BookListItem } from '@/components/reader-dashboard/book-list-item'
 import { LibraryEmptyState } from '@/components/reader-dashboard/library-empty-state'
 import { LibraryToolbar, type LibraryFilter, type LibraryView } from '@/components/reader-dashboard/library-toolbar'
 import { UploadBookDialog } from '@/components/reader-dashboard/upload-book-dialog'
+import { NotificationBell } from '@/components/reader-dashboard/notification-bell'
 
 /* ──────────────────── Hero Card ──────────────────── */
 /* ──────────────────── Hero Card ──────────────────── */
@@ -287,11 +288,11 @@ function BookCarousel({
                     <span>Em 2º plano</span>
                   </div>
                   <span className="text-[9px] text-library-muted text-center leading-tight">
-                    {book.completedParts && book.totalParts
+                    {typeof book.completedParts === 'number' && typeof book.totalParts === 'number' && book.totalParts > 0
                       ? `${book.completedParts}/${book.totalParts} partes (faltam ${Math.max(0, book.totalParts - book.completedParts)})`
                       : 'Gerando áudio...'}
                   </span>
-                  {book.completedParts && book.totalParts && book.totalParts > 0 && (
+                  {typeof book.completedParts === 'number' && typeof book.totalParts === 'number' && book.totalParts > 0 && (
                     <div className="h-1 w-full overflow-hidden rounded-full bg-neutral-700/40">
                       <div
                         className="h-full rounded-full bg-amber-500 transition-all duration-300"
@@ -328,7 +329,34 @@ export function ReaderDashboard({
   const [query, setQuery] = useState('')
   const [uploadMessage, setUploadMessage] = useState('')
 
-  const dashboardBooks = useMemo(() => buildDashboardBooks(books, progress), [books, progress])
+  // Atualizações reativas imediatas de partes e status enquanto o poller sincroniza com a VPS
+  const [activeJobUpdates, setActiveJobUpdates] = useState<
+    Record<string, { completedParts?: number; totalParts?: number; status?: string }>
+  >({})
+
+  const mergedBooks = useMemo(() => {
+    return books.map((b) => {
+      const update = activeJobUpdates[b.id]
+      if (!update) return b
+      return {
+        ...b,
+        completedParts: typeof update.completedParts === 'number' ? update.completedParts : b.completedParts,
+        totalParts: typeof update.totalParts === 'number' ? update.totalParts : b.totalParts,
+        status: update.status || b.status,
+      }
+    })
+  }, [books, activeJobUpdates])
+
+  const processingBooks = useMemo(
+    () => mergedBooks.filter((b) => b.status === 'processando' && b.jobId),
+    [mergedBooks],
+  )
+  const completedBooks = useMemo(
+    () => mergedBooks.filter((b) => b.status === 'concluido'),
+    [mergedBooks],
+  )
+
+  const dashboardBooks = useMemo(() => buildDashboardBooks(mergedBooks, progress), [mergedBooks, progress])
   const measuredListeningSeconds = useMemo(
     () => progress.reduce((sum, item) => sum + (item.listenedSeconds ?? 0), 0),
     [progress],
@@ -339,8 +367,8 @@ export function ReaderDashboard({
   // Sincronizador ativo em 2º plano para livros sendo sintetizados
   const isSyncingRef = useRef<Set<string>>(new Set())
   useEffect(() => {
-    const processingBooks = books.filter((b) => b.status === 'processando' && b.jobId)
-    if (processingBooks.length === 0) return
+    const activeToSync = books.filter((b) => b.status === 'processando' && b.jobId)
+    if (activeToSync.length === 0) return
 
     const savedApi = typeof window !== 'undefined' ? localStorage.getItem('audiobook_api_url') : null
     const apiUrl =
@@ -349,7 +377,7 @@ export function ReaderDashboard({
       'https://auditeca-api.duckdns.org'
 
     const syncJobs = async () => {
-      for (const pBook of processingBooks) {
+      for (const pBook of activeToSync) {
         if (!pBook.jobId || isSyncingRef.current.has(pBook.id)) continue
         isSyncingRef.current.add(pBook.id)
         try {
@@ -360,6 +388,16 @@ export function ReaderDashboard({
           })
           if (res.ok) {
             const data = await res.json()
+            if (typeof data.completedParts === 'number' || typeof data.totalParts === 'number' || data.status) {
+              setActiveJobUpdates((prev) => ({
+                ...prev,
+                [pBook.id]: {
+                  completedParts: data.completedParts,
+                  totalParts: data.totalParts,
+                  status: data.status,
+                },
+              }))
+            }
             if (data.updated) {
               router.refresh()
             }
@@ -375,7 +413,7 @@ export function ReaderDashboard({
     void syncJobs()
     const interval = setInterval(() => {
       void syncJobs()
-    }, 7000)
+    }, 5000)
 
     return () => clearInterval(interval)
   }, [books, router])
@@ -449,6 +487,10 @@ export function ReaderDashboard({
                 Leitor <strong className="font-medium text-library-ink">{userName.split(' ')[0]}</strong>
               </span>
             )}
+            <NotificationBell
+              processingBooks={processingBooks}
+              completedBooks={completedBooks}
+            />
             <Button
               onClick={() => {
                 setUploadMessage('')
