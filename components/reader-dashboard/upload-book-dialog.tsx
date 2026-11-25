@@ -238,6 +238,26 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   }
 
   /**
+   * Envia arquivos diretamente para a biblioteca permanente na VPS
+   */
+  async function uploadToVpsBiblioteca(targetFilename: string, file: File): Promise<string> {
+    const serverOrigin = (apiUrl.trim() || process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'https://auditeca-api.duckdns.org').replace(/\/+$/, '')
+    const fd = new FormData()
+    fd.append('user_id', activeUserId || 'default')
+    fd.append('filename', targetFilename)
+    fd.append('file', file)
+    const res = await fetch(`${serverOrigin}/biblioteca/upload`, {
+      method: 'POST',
+      body: fd,
+    })
+    if (!res.ok) {
+      throw new Error(`Falha ao enviar ${targetFilename} para a VPS (${res.status})`)
+    }
+    const data = await res.json()
+    return data.url
+  }
+
+  /**
    * Salva os arquivos de áudio, mapa e PDF original na infraestrutura permanente (Vercel Blob / Local Storage)
    */
   async function persistBookFiles(
@@ -266,23 +286,6 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     let directJsonPathname = ''
     let directPdfPathname = ''
     let directError: Error | null = null
-
-    async function uploadToVpsBiblioteca(targetFilename: string, file: File): Promise<string> {
-      const serverOrigin = (apiUrl.trim() || 'https://auditeca-api.duckdns.org').replace(/\/+$/, '')
-      const fd = new FormData()
-      fd.append('user_id', activeUserId || 'default')
-      fd.append('filename', targetFilename)
-      fd.append('file', file)
-      const res = await fetch(`${serverOrigin}/biblioteca/upload`, {
-        method: 'POST',
-        body: fd,
-      })
-      if (!res.ok) {
-        throw new Error(`Falha ao enviar ${targetFilename} para a VPS (${res.status})`)
-      }
-      const data = await res.json()
-      return data.url
-    }
 
     try {
       if (pdfFile) {
@@ -508,6 +511,17 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
       abortControllerRef.current = abortController
 
       try {
+        let uploadedPdfUrl: string | null = null
+        if (docFile && docFile.name.toLowerCase().endsWith('.pdf')) {
+          try {
+            const sanitizedDoc = name.replace(/[^a-z0-9_-]+/gi, '_')
+            uploadedPdfUrl = await uploadToVpsBiblioteca(`${sanitizedDoc}.pdf`, docFile)
+            addLog('📄 Cópia do PDF original com ilustrações gravada na VPS com sucesso!', 'SUCCESS')
+          } catch (pdfUploadErr) {
+            console.warn('Aviso: Não foi possível salvar cópia do PDF na VPS:', pdfUploadErr)
+          }
+        }
+
         const client = new AudiobookApiClient(apiUrl.trim() || process.env.NEXT_PUBLIC_AUDIOBOOK_API_URL || 'https://auditeca-api.duckdns.org')
 
         const result = await client.processarLivro(
@@ -549,6 +563,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
                     coverUrl: coverUrl.trim() || undefined,
                     audioUrl: `${serverOrigin}/download/${jobId}/audio`,
                     jsonUrl: `${serverOrigin}/download/${jobId}/mapa`,
+                    pdfUrl: uploadedPdfUrl || undefined,
                     status: 'processando',
                     jobId,
                     completedParts: 0,
