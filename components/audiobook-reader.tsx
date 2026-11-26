@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  BookOpen,
   Bookmark,
   BookmarkCheck,
   ChevronLeft,
@@ -14,19 +13,21 @@ import {
   FileText,
   Home,
   Minus,
-  Pause,
-  Play,
   Plus,
-  RotateCcw,
-  RotateCw,
   Settings2,
   X,
 } from 'lucide-react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { mapPdfDocumentToWords, type PageWordRange, type WordPosition } from '@/lib/books/pdf-sync'
 import { PdfPageSheet } from '@/components/reader-dashboard/pdf-page-sheet'
+import { TraditionalPlayer } from '@/components/audio-player/traditional-player'
+import { CompactPlayer } from '@/components/audio-player/compact-player'
+import { useAudioPlayerController } from '@/hooks/use-audio-player-controller'
+import type { AudioPlayerState, PlayerMode } from '@/types/audio-player'
 
 type Word = { p: string; i: number; f: number }
+
+const PLAYER_MODE_STORAGE_KEY = 'auditeca_player_mode_preference'
 
 const demoText = ``
 
@@ -83,6 +84,7 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
   const [isLoading, setIsLoading] = useState(true)
   const [resumePrompt, setResumePrompt] = useState<number | null>(null)
   const [restoreTime, setRestoreTime] = useState<number | null>(null)
+  const [playerMode, setPlayerModeState] = useState<PlayerMode>('classic')
 
   const audioRef = useRef<HTMLAudioElement>(null)
   const pendingAudioRef = useRef<File | null>(null)
@@ -95,6 +97,23 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
   const playbackSampleRef = useRef<{ position: number; wallTime: number } | null>(null)
   const durationSavedRef = useRef<string | null>(null)
   const lastProgressSaveRef = useRef(0)
+
+  // Initialize and persist playerMode in localStorage
+  useEffect(() => {
+    try {
+      const savedMode = localStorage.getItem(PLAYER_MODE_STORAGE_KEY)
+      if (savedMode === 'compact' || savedMode === 'classic') {
+        setPlayerModeState(savedMode)
+      }
+    } catch {}
+  }, [])
+
+  const setPlayerMode = useCallback((mode: PlayerMode) => {
+    setPlayerModeState(mode)
+    try {
+      localStorage.setItem(PLAYER_MODE_STORAGE_KEY, mode)
+    } catch {}
+  }, [])
 
   const bookKey = useMemo(() => storageKey('book', title), [title])
   const progressKey = useMemo(() => storageKey('audiobook_progress', title), [title])
@@ -379,29 +398,32 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
     setThemeState(nextTheme)
   }
 
-  function saveProgress(nextTime: number) {
-    const safeTime = Math.max(0, audioDuration ? Math.min(nextTime, audioDuration) : nextTime)
-    setTime(safeTime)
-    try {
-      localStorage.setItem(progressKey, String(safeTime))
-      localStorage.setItem(listenedSecondsKey, String(listenedSecondsRef.current))
-    } catch {}
-    if (listenedSecondsMeasuredRef.current) {
+  const saveProgress = useCallback(
+    (nextTime: number) => {
+      const safeTime = Math.max(0, audioDuration ? Math.min(nextTime, audioDuration) : nextTime)
+      setTime(safeTime)
       try {
+        localStorage.setItem(progressKey, String(safeTime))
         localStorage.setItem(listenedSecondsKey, String(listenedSecondsRef.current))
       } catch {}
-    }
-    const body = {
-      ...(bookId ? { bookId } : { bookName: title }),
-      currentTime: safeTime,
-      ...(listenedSecondsMeasuredRef.current ? { listenedSeconds: listenedSecondsRef.current } : {}),
-    }
-    void fetch('/api/progress', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    }).catch(() => {})
-  }
+      if (listenedSecondsMeasuredRef.current) {
+        try {
+          localStorage.setItem(listenedSecondsKey, String(listenedSecondsRef.current))
+        } catch {}
+      }
+      const body = {
+        ...(bookId ? { bookId } : { bookName: title }),
+        currentTime: safeTime,
+        ...(listenedSecondsMeasuredRef.current ? { listenedSeconds: listenedSecondsRef.current } : {}),
+      }
+      void fetch('/api/progress', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }).catch(() => {})
+    },
+    [audioDuration, bookId, listenedSecondsKey, progressKey, title]
+  )
 
   function handleGoHome() {
     const audio = audioRef.current
@@ -443,40 +465,6 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
     })
   }
 
-  async function togglePlayback() {
-    const audio = audioRef.current
-    if (!audio || !audioUrl) return
-    try {
-      if (audio.paused) {
-        await audio.play()
-      } else {
-        audio.pause()
-        saveProgress(audio.currentTime)
-        setPlaying(false)
-      }
-    } catch {
-      setPlaying(false)
-    }
-  }
-
-  function handleSkip(offset: number) {
-    if (!audioRef.current) return
-    const maxDur = audioDuration ?? duration
-    const next = Math.max(0, Math.min(maxDur, time + offset))
-    audioRef.current.currentTime = next
-    setTime(next)
-    syncReaderToTime(next)
-    saveProgress(next)
-  }
-
-  const availableSpeeds = [0.75, 1, 1.25, 1.5, 2]
-  function cycleSpeed() {
-    const nextIdx = (availableSpeeds.indexOf(speed) + 1) % availableSpeeds.length
-    const nextSpeed = availableSpeeds[nextIdx] ?? 1
-    setSpeed(nextSpeed)
-    if (audioRef.current) audioRef.current.playbackRate = nextSpeed
-  }
-
   function seek(index: number) {
     const next = words[index]?.i ?? 0
     playbackSampleRef.current = null
@@ -488,21 +476,60 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
     setActive(index)
   }
 
-  function navigate(nextPage: number) {
-    const next = Math.max(0, Math.min(totalSpreads - 1, nextPage))
-    setPage(next)
-    setFlip((value) => value + 1)
-    if (pdfDoc && viewMode === 'sheet' && pdfPageRanges.length > 0) {
-      const targetPageNum = next * 2 + 1
-      const range = pdfPageRanges.find((r) => r.pageNumber === targetPageNum)
-      if (range && words[range.startWordIndex]) {
-        seek(range.startWordIndex)
-        return
+  const navigate = useCallback(
+    (nextPage: number) => {
+      const next = Math.max(0, Math.min(totalSpreads - 1, nextPage))
+      setPage(next)
+      setFlip((value) => value + 1)
+      if (pdfDoc && viewMode === 'sheet' && pdfPageRanges.length > 0) {
+        const targetPageNum = next * 2 + 1
+        const range = pdfPageRanges.find((r) => r.pageNumber === targetPageNum)
+        if (range && words[range.startWordIndex]) {
+          seek(range.startWordIndex)
+          return
+        }
       }
-    }
-    const index = next * wordsPerPage * 2
-    if (words[index]) seek(index)
-  }
+      const index = next * wordsPerPage * 2
+      if (words[index]) seek(index)
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pdfDoc, pdfPageRanges, totalSpreads, viewMode, words, wordsPerPage]
+  )
+
+  const audioControllerActions = useAudioPlayerController({
+    audioRef,
+    audioUrl,
+    time,
+    duration,
+    audioDuration,
+    speed,
+    setSpeed,
+    playing,
+    setPlaying,
+    setTime,
+    saveProgress,
+    syncReaderToTime,
+    navigate,
+    playerMode,
+    setPlayerMode,
+  })
+
+  const audioPlayerState: AudioPlayerState = useMemo(
+    () => ({
+      time,
+      duration,
+      playing,
+      speed,
+      page,
+      totalPages,
+      totalSpreads,
+      title,
+      coverUrl,
+      audioUrl,
+      isAudioReady: audioReady,
+    }),
+    [audioReady, audioUrl, coverUrl, duration, page, playing, speed, time, title, totalPages, totalSpreads]
+  )
 
   async function persistBook(audio: File, json: File) {
     const name = json.name.replace(/\.json$/i, '')
@@ -777,145 +804,116 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
             <Settings2 className="size-3.5 sm:size-4" />
           </button>
         </div>
-
-        
       </header>
 
-{/* Reading Settings Drawer (Bottom Sheet on Mobile, Popover on Desktop) */}
-        <AnimatePresence>
-          {settingsOpen && (
-            <>
-              {/* Mobile backdrop */}
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setSettingsOpen(false)}
-                className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs md:hidden"
-              />
+      {/* Reading Settings Drawer (Bottom Sheet on Mobile, Popover on Desktop) */}
+      <AnimatePresence>
+        {settingsOpen && (
+          <>
+            {/* Mobile backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSettingsOpen(false)}
+              className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs md:hidden"
+            />
 
-              <motion.section
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 16 }}
-                transition={{ duration: 0.2 }}
-                className="fixed inset-x-0 bottom-0 z-50 max-h-[85vh] overflow-y-auto rounded-t-3xl border-t border-white/15 bg-[#12161f] p-5 shadow-2xl safe-area-bottom md:fixed md:right-8 md:top-20 md:bottom-auto md:w-[320px] md:rounded-2xl md:border md:border-white/10"
-              >
-                {/* Drag handle for mobile */}
-                <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-white/20 md:hidden" />
+            <motion.section
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 16 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-x-0 bottom-0 z-50 max-h-[85vh] overflow-y-auto rounded-t-3xl border-t border-white/15 bg-[#12161f] p-5 shadow-2xl safe-area-bottom md:fixed md:right-8 md:top-20 md:bottom-auto md:w-[320px] md:rounded-2xl md:border md:border-white/10"
+            >
+              {/* Drag handle for mobile */}
+              <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-white/20 md:hidden" />
 
-                <div className="mb-4 flex items-center justify-between">
-                  <h2 className="font-serif text-sm font-semibold text-[#f5f2eb]">Ajustes de Leitura</h2>
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="font-serif text-sm font-semibold text-[#f5f2eb]">Ajustes de Leitura</h2>
+                <button
+                  onClick={() => setSettingsOpen(false)}
+                  className="rounded-full p-1 text-[#9aa6b6] hover:bg-white/10 hover:text-white"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+
+              {/* Estilo do Reprodutor */}
+              <div className="mb-4">
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-400/80">
+                  Estilo do Reprodutor
+                </p>
+                <div className="grid grid-cols-2 gap-2">
                   <button
-                    onClick={() => setSettingsOpen(false)}
-                    className="rounded-full p-1 text-[#9aa6b6] hover:bg-white/10 hover:text-white"
+                    onClick={() => setPlayerMode('classic')}
+                    className={`rounded-xl border p-2 text-xs font-medium transition-all ${
+                      playerMode === 'classic'
+                        ? 'border-amber-500/40 bg-amber-500/20 text-amber-300 font-semibold'
+                        : 'border-white/10 bg-white/5 text-[#c8d0dc] hover:bg-white/10'
+                    }`}
                   >
-                    <X className="size-4" />
+                    🎛️ Tradicional
+                  </button>
+                  <button
+                    onClick={() => setPlayerMode('compact')}
+                    className={`rounded-xl border p-2 text-xs font-medium transition-all ${
+                      playerMode === 'compact'
+                        ? 'border-amber-500/40 bg-amber-500/20 text-amber-300 font-semibold'
+                        : 'border-white/10 bg-white/5 text-[#c8d0dc] hover:bg-white/10'
+                    }`}
+                  >
+                    ✨ Compacto (Figma)
                   </button>
                 </div>
+              </div>
 
-                {pdfDoc && (
-                  <div className="mb-4">
-                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-400/80">
-                      Modo de visualização
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        onClick={() => setViewMode('sheet')}
-                        className={`rounded-xl border p-2 text-xs font-medium transition-all ${
-                          viewMode === 'sheet'
-                            ? 'border-amber-500/40 bg-amber-500/20 text-amber-300 font-semibold'
-                            : 'border-white/10 bg-white/5 text-[#c8d0dc] hover:bg-white/10'
-                        }`}
-                      >
-                        📖 Folha Real (PDF)
-                      </button>
-                      <button
-                        onClick={() => setViewMode('text')}
-                        className={`rounded-xl border p-2 text-xs font-medium transition-all ${
-                          viewMode === 'text'
-                            ? 'border-amber-500/40 bg-amber-500/20 text-amber-300 font-semibold'
-                            : 'border-white/10 bg-white/5 text-[#c8d0dc] hover:bg-white/10'
-                        }`}
-                      >
-                        📝 Texto Corrido
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {pdfDoc && viewMode === 'sheet' && (
-                  <div className="mb-4">
-                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-400/80">
-                      Preenchimento da Folha
-                    </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[
-                        [1.0, 'Original'],
-                        [1.12, 'Preenchido'],
-                        [1.25, 'Ampliado'],
-                      ].map(([val, label]) => (
-                        <button
-                          key={String(val)}
-                          onClick={() => setPdfZoom(Number(val))}
-                          className={`rounded-xl border p-2 text-xs transition-all ${
-                            pdfZoom === val
-                              ? 'border-amber-500/50 bg-amber-500/20 text-amber-300 font-semibold'
-                              : 'border-white/10 bg-white/5 text-[#c8d0dc] hover:bg-white/10'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <label className="mb-3 block text-[10px] font-semibold uppercase tracking-wider text-amber-400/80">
-                  Tipografia
-                  <select
-                    value={font}
-                    onChange={(e) => setFont(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-white/10 bg-[#1a202c] p-2 text-xs text-[#f5f2eb] outline-none focus:border-amber-500/40"
-                  >
-                    <option value="Arial">Arial (Sans)</option>
-                    <option value="Georgia">Georgia (Serif)</option>
-                    <option value="Verdana">Verdana (Legível)</option>
-                    <option value="Monospace">Monospace</option>
-                  </select>
-                </label>
-
-                <div className="mb-3.5 flex items-center justify-between">
-                  <span className="text-xs text-[#d0d7e0]">Tamanho da fonte · {fontSize}px</span>
-                  <div className="flex gap-1.5">
+              {pdfDoc && (
+                <div className="mb-4">
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-400/80">
+                    Modo de visualização
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
                     <button
-                      onClick={() => setFontSize((v) => Math.max(16, v - 1))}
-                      className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-white hover:bg-white/10"
+                      onClick={() => setViewMode('sheet')}
+                      className={`rounded-xl border p-2 text-xs font-medium transition-all ${
+                        viewMode === 'sheet'
+                          ? 'border-amber-500/40 bg-amber-500/20 text-amber-300 font-semibold'
+                          : 'border-white/10 bg-white/5 text-[#c8d0dc] hover:bg-white/10'
+                      }`}
                     >
-                      <Minus className="size-3" />
+                      📖 Folha Real (PDF)
                     </button>
                     <button
-                      onClick={() => setFontSize((v) => Math.min(30, v + 1))}
-                      className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-white hover:bg-white/10"
+                      onClick={() => setViewMode('text')}
+                      className={`rounded-xl border p-2 text-xs font-medium transition-all ${
+                        viewMode === 'text'
+                          ? 'border-amber-500/40 bg-amber-500/20 text-amber-300 font-semibold'
+                          : 'border-white/10 bg-white/5 text-[#c8d0dc] hover:bg-white/10'
+                      }`}
                     >
-                      <Plus className="size-3" />
+                      📝 Texto Corrido
                     </button>
                   </div>
                 </div>
+              )}
 
-                <div className="mb-3.5">
-                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-400/80">Tema da Página</p>
+              {pdfDoc && viewMode === 'sheet' && (
+                <div className="mb-4">
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-400/80">
+                    Preenchimento da Folha
+                  </p>
                   <div className="grid grid-cols-3 gap-2">
                     {[
-                      ['sepia', 'Âmbar Sepia'],
-                      ['light', 'Papel Claro'],
-                      ['night', 'Dark Velvet'],
-                    ].map(([id, label]) => (
+                      [1.0, 'Original'],
+                      [1.12, 'Preenchido'],
+                      [1.25, 'Ampliado'],
+                    ].map(([val, label]) => (
                       <button
-                        key={id}
-                        onClick={() => setTheme(id as any)}
+                        key={String(val)}
+                        onClick={() => setPdfZoom(Number(val))}
                         className={`rounded-xl border p-2 text-xs transition-all ${
-                          theme === id
+                          pdfZoom === val
                             ? 'border-amber-500/50 bg-amber-500/20 text-amber-300 font-semibold'
                             : 'border-white/10 bg-white/5 text-[#c8d0dc] hover:bg-white/10'
                         }`}
@@ -925,24 +923,79 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
                     ))}
                   </div>
                 </div>
+              )}
 
-                <div>
-                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-400/80">Destaque de Palavras</p>
-                  <select
-                    value={highlight}
-                    onChange={(e) => setHighlight(e.target.value)}
-                    className="w-full rounded-xl border border-white/10 bg-[#1a202c] p-2 text-xs text-[#f5f2eb] outline-none focus:border-amber-500/40"
+              <label className="mb-3 block text-[10px] font-semibold uppercase tracking-wider text-amber-400/80">
+                Tipografia
+                <select
+                  value={font}
+                  onChange={(e) => setFont(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-[#1a202c] p-2 text-xs text-[#f5f2eb] outline-none focus:border-amber-500/40"
+                >
+                  <option value="Arial">Arial (Sans)</option>
+                  <option value="Georgia">Georgia (Serif)</option>
+                  <option value="Verdana">Verdana (Legível)</option>
+                  <option value="Monospace">Monospace</option>
+                </select>
+              </label>
+
+              <div className="mb-3.5 flex items-center justify-between">
+                <span className="text-xs text-[#d0d7e0]">Tamanho da fonte · {fontSize}px</span>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => setFontSize((v) => Math.max(16, v - 1))}
+                    className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-white hover:bg-white/10"
                   >
-                    <option value="blue">Realce azul / âmbar brilhante</option>
-                    <option value="underline">Apenas sublinhado suave</option>
-                    <option value="focus">Modo Foco / Karaokê</option>
-                  </select>
+                    <Minus className="size-3" />
+                  </button>
+                  <button
+                    onClick={() => setFontSize((v) => Math.min(30, v + 1))}
+                    className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-white hover:bg-white/10"
+                  >
+                    <Plus className="size-3" />
+                  </button>
                 </div>
-              </motion.section>
-            </>
-          )}
-        </AnimatePresence>
+              </div>
 
+              <div className="mb-3.5">
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-400/80">Tema da Página</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    ['sepia', 'Âmbar Sepia'],
+                    ['light', 'Papel Claro'],
+                    ['night', 'Dark Velvet'],
+                  ].map(([id, label]) => (
+                    <button
+                      key={id}
+                      onClick={() => setTheme(id as 'sepia' | 'light' | 'night')}
+                      className={`rounded-xl border p-2 text-xs transition-all ${
+                        theme === id
+                          ? 'border-amber-500/50 bg-amber-500/20 text-amber-300 font-semibold'
+                          : 'border-white/10 bg-white/5 text-[#c8d0dc] hover:bg-white/10'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-400/80">Destaque de Palavras</p>
+                <select
+                  value={highlight}
+                  onChange={(e) => setHighlight(e.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-[#1a202c] p-2 text-xs text-[#f5f2eb] outline-none focus:border-amber-500/40"
+                >
+                  <option value="blue">Realce azul / âmbar brilhante</option>
+                  <option value="underline">Apenas sublinhado suave</option>
+                  <option value="focus">Modo Foco / Karaokê</option>
+                </select>
+              </div>
+            </motion.section>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Main Reading Canvas */}
       <div className="relative z-10 mx-auto flex max-w-[1300px] flex-col px-3.5 pb-36 pt-4 sm:px-6 sm:pt-6 md:px-10 md:pt-8">
@@ -1132,89 +1185,22 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
         </div>
       </div>
 
-      {/* Floating Ergonomic Audio Player Dock */}
-      <footer className="fixed bottom-3 sm:bottom-5 left-1/2 z-40 flex w-[calc(100%-16px)] sm:w-[calc(100%-32px)] max-w-4xl -translate-x-1/2 flex-col gap-2 rounded-2xl border border-white/15 bg-[#101318]/92 p-3 sm:px-6 sm:py-3.5 text-white shadow-2xl backdrop-blur-2xl safe-area-bottom">
-        {/* Scrubber & Time */}
-        <div className="flex w-full items-center gap-2.5">
-          <span className="w-10 text-right text-[10px] sm:text-xs font-mono text-amber-400/80">
-            {Math.floor(time / 60)}:{String(Math.floor(time % 60)).padStart(2, '0')}
-          </span>
-
-          <div className="relative flex-1">
-            <input
-              aria-label="Progresso do áudio"
-              type="range"
-              min="0"
-              max={duration}
-              step="0.01"
-              value={time}
-              onChange={(e) => {
-                const t = Number(e.target.value)
-                if (audioRef.current) audioRef.current.currentTime = t
-                saveProgress(t)
-                setActive(findWord(words, t))
-              }}
-              className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/15 accent-amber-500 hover:accent-amber-400"
-            />
-          </div>
-
-          <span className="w-10 text-[10px] sm:text-xs font-mono text-[#8a96a6]">
-            {Math.floor(duration / 60)}:{String(Math.floor(duration % 60)).padStart(2, '0')}
-          </span>
-        </div>
-
-        {/* Controls row */}
-        <div className="flex items-center justify-between">
-          {/* Left: Quick Page info or upload */}
-          <div className="flex items-center gap-2 text-xs text-[#9aa6b6]">
-            <span className="hidden sm:inline font-medium text-amber-400/70">
-              Spreads: {page + 1}/{totalSpreads}
-            </span>
-          </div>
-
-          {/* Center Playback Controls */}
-          <div className="flex items-center gap-2.5 sm:gap-4 mx-auto">
-            <button
-              onClick={() => handleSkip(-10)}
-              className="flex size-9 sm:size-10 items-center justify-center rounded-full text-[#c8d0dc] hover:bg-white/10 hover:text-white transition-colors"
-              title="Voltar 10 segundos"
-              aria-label="Voltar 10 segundos"
-            >
-              <RotateCcw className="size-4 sm:size-5" />
-            </button>
-
-            <button
-              onClick={() => void togglePlayback()}
-              disabled={!audioUrl}
-              className="flex size-11 sm:size-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-amber-600 text-[#0b1117] shadow-lg shadow-amber-500/20 hover:scale-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 transition-all"
-              aria-label={playing ? 'Pausar' : 'Reproduzir'}
-              title={audioUrl ? (playing ? 'Pausar' : 'Reproduzir') : 'Carregando áudio...'}
-            >
-              {playing ? <Pause className="size-5 fill-current" /> : <Play className="ml-0.5 size-5 fill-current" />}
-            </button>
-
-            <button
-              onClick={() => handleSkip(10)}
-              className="flex size-9 sm:size-10 items-center justify-center rounded-full text-[#c8d0dc] hover:bg-white/10 hover:text-white transition-colors"
-              title="Avançar 10 segundos"
-              aria-label="Avançar 10 segundos"
-            >
-              <RotateCw className="size-4 sm:size-5" />
-            </button>
-          </div>
-
-          {/* Right: Speed Button */}
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={cycleSpeed}
-              className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-semibold text-amber-300 hover:bg-white/10 transition-colors"
-              title="Alterar velocidade de reprodução"
-            >
-              {speed}x
-            </button>
-          </div>
-        </div>
-      </footer>
+      {/* Alternância entre Reprodutor Tradicional e Compacto com AnimatePresence mode='wait' */}
+      <AnimatePresence mode="wait">
+        {playerMode === 'compact' ? (
+          <CompactPlayer
+            key="compact"
+            state={audioPlayerState}
+            actions={audioControllerActions}
+          />
+        ) : (
+          <TraditionalPlayer
+            key="classic"
+            state={audioPlayerState}
+            actions={audioControllerActions}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Upload Modal (fallback / legacy support) */}
       {uploadOpen && (
