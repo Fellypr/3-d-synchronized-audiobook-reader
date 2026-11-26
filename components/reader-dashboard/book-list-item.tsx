@@ -221,6 +221,7 @@ export function BookListItem({ book, isLastRead, view, onDeleted }: BookListItem
                 </Button>
 
                 <Button
+                  nativeButton={false}
                   render={<Link href={`/reader/${book.id}`} aria-label={`${actionLabel}: ${book.name}`} />}
                   className="h-9 flex-1 rounded-xl bg-library-accent px-3 text-xs sm:text-sm font-semibold text-library-accent-foreground transition-all hover:bg-library-accent/90 active:scale-[0.98]"
                 >
@@ -340,6 +341,7 @@ export function BookListItem({ book, isLastRead, view, onDeleted }: BookListItem
         )}
 
         <Button
+          nativeButton={false}
           render={<Link href={`/reader/${book.id}`} aria-label={`${actionLabel}: ${book.name}`} />}
           className="h-10 rounded-xl bg-library-accent px-4 text-xs sm:text-sm font-semibold text-library-accent-foreground shadow-sm transition-all hover:bg-library-accent/90 active:scale-[0.98]"
         >

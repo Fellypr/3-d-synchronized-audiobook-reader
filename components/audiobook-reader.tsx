@@ -21,7 +21,13 @@ import {
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { mapPdfDocumentToWords, type PageWordRange, type WordPosition } from '@/lib/books/pdf-sync'
 import { extractBookOutline } from '@/lib/books/outline'
+import {
+  extractTextAnchor,
+  findActiveChapterAndSection,
+  resolveBookmarkWordIndex,
+} from '@/lib/books/bookmark-anchor'
 import type { BookIndexItem } from '@/types/book-index'
+import type { BookmarkItem } from '@/types/bookmark'
 import { BookIndexSidebar } from '@/components/book-index/book-index-sidebar'
 import { PdfPageSheet } from '@/components/reader-dashboard/pdf-page-sheet'
 import { TraditionalPlayer } from '@/components/audio-player/traditional-player'
@@ -76,6 +82,10 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
   const [outlineItems, setOutlineItems] = useState<BookIndexItem[]>([])
   const [uploadOpen, setUploadOpen] = useState(false)
   const [bookmarked, setBookmarked] = useState(false)
+  const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([])
+  const [isSavingBookmark, setIsSavingBookmark] = useState(false)
+  const [bookmarkFeedback, setBookmarkFeedback] = useState<string | null>(null)
+  const [isDeletingBookmarkId, setIsDeletingBookmarkId] = useState<string | null>(null)
   const [page, setPage] = useState(0)
   const [flip, setFlip] = useState(0)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
@@ -528,6 +538,119 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
     [navigate, totalSpreads]
   )
 
+  // Carregar marcadores salvos do livro
+  useEffect(() => {
+    let cancelled = false
+    async function loadBookmarks() {
+      if (!bookId && !title) return
+      try {
+        const params = new URLSearchParams()
+        if (bookId) params.set('bookId', bookId)
+        if (title) params.set('bookName', title)
+        const res = await fetch(`/api/bookmarks?${params.toString()}`)
+        if (!res.ok) return
+        const data = (await res.json()) as BookmarkItem[]
+        if (!cancelled && Array.isArray(data)) {
+          setBookmarks(data)
+        }
+      } catch {
+        // Silencioso em caso de rede instável
+      }
+    }
+    void loadBookmarks()
+    return () => {
+      cancelled = true
+    }
+  }, [bookId, title])
+
+  const handleSaveBookmark = useCallback(async () => {
+    if (isSavingBookmark) return
+    setIsSavingBookmark(true)
+    try {
+      const currentPage = page * 2 + 1
+      const { chapter, section } = findActiveChapterAndSection(outlineItems, currentPage)
+      const { selectedText, textPrefix, textSuffix } = extractTextAnchor(words, active)
+
+      const res = await fetch('/api/bookmarks', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          bookId: bookId ?? null,
+          bookName: title,
+          chapter,
+          section,
+          pageNumber: currentPage,
+          wordIndex: active,
+          selectedText: selectedText || `Página ${currentPage}`,
+          textPrefix,
+          textSuffix,
+          audioTimeSeconds: audioUrl ? time : null,
+        }),
+      })
+
+      if (res.ok) {
+        const created = (await res.json()) as BookmarkItem
+        setBookmarks((prev) => [created, ...prev])
+        setBookmarked(true)
+        setBookmarkFeedback(chapter ? `Salvo em ${chapter}` : `Salvo · pág. ${currentPage}`)
+        setTimeout(() => {
+          setBookmarkFeedback(null)
+          setBookmarked(false)
+        }, 2500)
+      }
+    } finally {
+      setIsSavingBookmark(false)
+    }
+  }, [active, audioUrl, bookId, isSavingBookmark, outlineItems, page, time, title, words])
+
+  const handleSelectBookmark = useCallback(
+    (bookmark: BookmarkItem) => {
+      const targetWordIndex = resolveBookmarkWordIndex(words, bookmark)
+      const targetAudioTime =
+        bookmark.audioTimeSeconds != null ? bookmark.audioTimeSeconds : (words[targetWordIndex]?.i ?? 0)
+
+      if (audioRef.current && audioUrl) {
+        audioRef.current.currentTime = targetAudioTime
+      }
+      setTime(targetAudioTime)
+      setActive(targetWordIndex)
+
+      // Recalcula a página/spread atual com base na âncora ou fallback
+      let targetPage = bookmark.pageNumber ?? 1
+      if (pdfDoc && viewMode === 'sheet' && pdfPageRanges.length > 0) {
+        const foundRange = pdfPageRanges.find(
+          (r) => targetWordIndex >= r.startWordIndex && targetWordIndex <= r.endWordIndex
+        )
+        if (foundRange) targetPage = foundRange.pageNumber
+      } else if (wordsPerPage > 0) {
+        targetPage = Math.floor(targetWordIndex / wordsPerPage) + 1
+      }
+
+      const targetSpread = Math.max(0, Math.min(totalSpreads - 1, Math.floor((targetPage - 1) / 2)))
+      setFlip(targetSpread > page ? 1 : -1)
+      setPage(targetSpread)
+
+      if (typeof window !== 'undefined' && window.innerWidth < 768) {
+        setIndexOpen(false)
+      }
+    },
+    [audioUrl, page, pdfDoc, pdfPageRanges, totalSpreads, viewMode, words, wordsPerPage]
+  )
+
+  const handleDeleteBookmark = useCallback(async (id: string) => {
+    setIsDeletingBookmarkId(id)
+    try {
+      const res = await fetch(`/api/bookmarks?id=${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      })
+      if (res.ok) {
+        setBookmarks((prev) => prev.filter((b) => b.id !== id))
+      }
+    } finally {
+      setIsDeletingBookmarkId(null)
+    }
+  }, [])
+
   const audioControllerActions = useAudioPlayerController({
     audioRef,
     audioUrl,
@@ -765,7 +888,7 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
         )}
       </AnimatePresence>
 
-      {/* Sidebar do Índice do Livro */}
+      {/* Sidebar do Índice do Livro & Marcadores */}
       <BookIndexSidebar
         isOpen={indexOpen}
         onClose={() => setIndexOpen(false)}
@@ -774,6 +897,10 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
         currentSpreadPage={Math.min(page * 2 + 2, totalPages)}
         totalPages={totalPages}
         onSelectPage={handleSelectPageFromIndex}
+        bookmarks={bookmarks}
+        onSelectBookmark={handleSelectBookmark}
+        onDeleteBookmark={handleDeleteBookmark}
+        isDeletingBookmarkId={isDeletingBookmarkId}
       />
 
       {/* Refined Header */}
@@ -1071,22 +1198,31 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
               {Math.round((active / Math.max(1, words.length - 1)) * 100)}% concluído · {words.length.toLocaleString('pt-BR')} palavras
             </p>
           </div>
-          <button
-            onClick={() => setBookmarked(!bookmarked)}
-            className={`rounded-full border p-2 sm:p-2.5 transition-all ${
-              bookmarked
-                ? 'border-amber-500/40 bg-amber-500/20 text-amber-300 shadow-md shadow-amber-500/10'
-                : 'border-white/10 bg-white/5 text-[#c8d0dc] hover:bg-white/10'
-            }`}
-            aria-label="Marcar página"
-            title={bookmarked ? 'Página marcada' : 'Marcar página atual'}
-          >
-            {bookmarked ? (
-              <BookmarkCheck className="size-4 sm:size-5 fill-amber-400 text-amber-400" />
-            ) : (
-              <Bookmark className="size-4 sm:size-5" />
+          <div className="flex items-center gap-2.5">
+            {bookmarkFeedback && (
+              <span className="text-xs font-medium text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 rounded-full animate-in fade-in">
+                {bookmarkFeedback}
+              </span>
             )}
-          </button>
+            <button
+              type="button"
+              onClick={() => void handleSaveBookmark()}
+              disabled={isSavingBookmark}
+              className={`rounded-full border p-2 sm:p-2.5 transition-all disabled:opacity-50 ${
+                bookmarked
+                  ? 'border-amber-500/40 bg-amber-500/20 text-amber-300 shadow-md shadow-amber-500/10'
+                  : 'border-white/10 bg-white/5 text-[#c8d0dc] hover:bg-white/10'
+              }`}
+              aria-label="Salvar marcador no ponto atual"
+              title="Salvar marcador no ponto atual"
+            >
+              {bookmarked ? (
+                <BookmarkCheck className="size-4 sm:size-5 fill-amber-400 text-amber-400" />
+              ) : (
+                <Bookmark className="size-4 sm:size-5" />
+              )}
+            </button>
+          </div>
         </div>
 
         {/* 3D Realistic Book Stage */}

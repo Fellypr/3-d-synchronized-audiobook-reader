@@ -52,6 +52,42 @@ async function migrate() {
     `)
     console.log('✓ Índice "audiobookProgress_user_book_id_unique" criado/verificado')
 
+    // 5. Criar tabela bookmarks caso não exista
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "bookmarks" (
+        "id" text PRIMARY KEY NOT NULL,
+        "userId" text NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
+        "bookId" text REFERENCES "book"("id") ON DELETE CASCADE,
+        "bookName" text NOT NULL,
+        "chapter" text,
+        "section" text,
+        "pageNumber" integer,
+        "wordIndex" integer NOT NULL,
+        "selectedText" text NOT NULL,
+        "textPrefix" text,
+        "textSuffix" text,
+        "audioTimeSeconds" real,
+        "createdAt" timestamp DEFAULT now() NOT NULL,
+        "updatedAt" timestamp DEFAULT now() NOT NULL
+      );
+    `)
+    console.log('✓ Tabela "bookmarks" criada/verificada')
+
+    // 5.1 Criar índices da tabela bookmarks
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "bookmarks_user_book_idx" 
+      ON "bookmarks" ("userId", "bookId");
+    `)
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "bookmarks_user_book_name_idx" 
+      ON "bookmarks" ("userId", "bookName");
+    `)
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "bookmarks_user_created_at_idx" 
+      ON "bookmarks" ("userId", "createdAt");
+    `)
+    console.log('✓ Índices da tabela "bookmarks" criados/verificados')
+
     console.log('Migrações concluídas com sucesso!')
   } catch (err) {
     console.error('Erro ao executar migração:', err)

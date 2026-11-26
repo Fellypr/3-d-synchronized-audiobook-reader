@@ -1,4 +1,5 @@
-import { boolean, real, text, timestamp, unique, uniqueIndex, pgTable } from 'drizzle-orm/pg-core'
+import type { InferInsertModel, InferSelectModel } from 'drizzle-orm'
+import { boolean, index, integer, real, text, timestamp, unique, uniqueIndex, pgTable } from 'drizzle-orm/pg-core'
 
 export const user = pgTable('user', {
   id: text('id').primaryKey(),
@@ -75,3 +76,27 @@ export const audiobookProgress = pgTable('audiobookProgress', {
   userBookUnique: unique('audiobookProgress_user_book_unique').on(table.userId, table.bookName),
   userBookIdUnique: uniqueIndex('audiobookProgress_user_book_id_unique').on(table.userId, table.bookId),
 }))
+
+export const bookmarks = pgTable('bookmarks', {
+  id: text('id').primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  bookId: text('bookId').references(() => book.id, { onDelete: 'cascade' }),
+  bookName: text('bookName').notNull(),
+  chapter: text('chapter'),
+  section: text('section'),
+  pageNumber: integer('pageNumber'),
+  wordIndex: integer('wordIndex').notNull(),
+  selectedText: text('selectedText').notNull(),
+  textPrefix: text('textPrefix'),
+  textSuffix: text('textSuffix'),
+  audioTimeSeconds: real('audioTimeSeconds'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => ({
+  userBookIdx: index('bookmarks_user_book_idx').on(table.userId, table.bookId),
+  userBookNameIdx: index('bookmarks_user_book_name_idx').on(table.userId, table.bookName),
+  userCreatedAtIdx: index('bookmarks_user_created_at_idx').on(table.userId, table.createdAt),
+}))
+
+export type Bookmark = InferSelectModel<typeof bookmarks>
+export type NewBookmark = InferInsertModel<typeof bookmarks>

@@ -1,0 +1,136 @@
+import { NextResponse } from 'next/server'
+import { and, desc, eq, or } from 'drizzle-orm'
+import { randomUUID } from 'crypto'
+import { headers } from 'next/headers'
+import { auth } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { bookmarks } from '@/lib/db/schema'
+
+async function getUser() {
+  const session = await auth.api.getSession({ headers: await headers() })
+  return session?.user ?? null
+}
+
+export async function GET(request: Request) {
+  const user = await getUser()
+  if (!user) {
+    return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
+  }
+
+  const { searchParams } = new URL(request.url)
+  const bookId = searchParams.get('bookId')?.trim()
+  const bookName = searchParams.get('bookName')?.trim()
+
+  const filterConditions = []
+  if (bookId && bookName) {
+    filterConditions.push(or(eq(bookmarks.bookId, bookId), eq(bookmarks.bookName, bookName)))
+  } else if (bookId) {
+    filterConditions.push(eq(bookmarks.bookId, bookId))
+  } else if (bookName) {
+    filterConditions.push(eq(bookmarks.bookName, bookName))
+  }
+
+  const items = await db
+    .select()
+    .from(bookmarks)
+    .where(and(eq(bookmarks.userId, user.id), ...filterConditions))
+    .orderBy(desc(bookmarks.createdAt))
+
+  return NextResponse.json(items)
+}
+
+export async function POST(request: Request) {
+  const user = await getUser()
+  if (!user) {
+    return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
+  }
+
+  let body: {
+    bookId?: string | null
+    bookName?: string
+    chapter?: string | null
+    section?: string | null
+    pageNumber?: number | null
+    wordIndex?: number
+    selectedText?: string
+    textPrefix?: string | null
+    textSuffix?: string | null
+    audioTimeSeconds?: number | null
+  }
+
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Corpo da solicitação inválido.' }, { status: 400 })
+  }
+
+  const bookName = body.bookName?.trim()
+  const selectedText = body.selectedText?.trim()
+  const wordIndex = typeof body.wordIndex === 'number' ? body.wordIndex : Number(body.wordIndex)
+
+  if (!bookName) {
+    return NextResponse.json({ error: 'O nome do livro (bookName) é obrigatório.' }, { status: 400 })
+  }
+
+  if (!selectedText) {
+    return NextResponse.json({ error: 'O texto selecionado (selectedText) é obrigatório.' }, { status: 400 })
+  }
+
+  if (!Number.isInteger(wordIndex) || wordIndex < 0) {
+    return NextResponse.json({ error: 'O índice da palavra (wordIndex) deve ser um número inteiro não negativo.' }, { status: 400 })
+  }
+
+  const pageNumber = typeof body.pageNumber === 'number' && Number.isInteger(body.pageNumber)
+    ? body.pageNumber
+    : (body.pageNumber ? Number.parseInt(String(body.pageNumber), 10) : null)
+
+  const audioTimeSeconds = typeof body.audioTimeSeconds === 'number' && Number.isFinite(body.audioTimeSeconds)
+    ? body.audioTimeSeconds
+    : (body.audioTimeSeconds != null ? Number.parseFloat(String(body.audioTimeSeconds)) : null)
+
+  const newBookmark = {
+    id: randomUUID(),
+    userId: user.id,
+    bookId: body.bookId?.trim() || null,
+    bookName,
+    chapter: body.chapter?.trim() || null,
+    section: body.section?.trim() || null,
+    pageNumber: Number.isInteger(pageNumber) ? pageNumber : null,
+    wordIndex,
+    selectedText,
+    textPrefix: body.textPrefix ?? null,
+    textSuffix: body.textSuffix ?? null,
+    audioTimeSeconds: Number.isFinite(audioTimeSeconds) ? audioTimeSeconds : null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }
+
+  const [created] = await db.insert(bookmarks).values(newBookmark).returning()
+
+  return NextResponse.json(created, { status: 201 })
+}
+
+export async function DELETE(request: Request) {
+  const user = await getUser()
+  if (!user) {
+    return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
+  }
+
+  const { searchParams } = new URL(request.url)
+  const id = searchParams.get('id')?.trim()
+
+  if (!id) {
+    return NextResponse.json({ error: 'Parâmetro id é obrigatório.' }, { status: 400 })
+  }
+
+  const [deleted] = await db
+    .delete(bookmarks)
+    .where(and(eq(bookmarks.id, id), eq(bookmarks.userId, user.id)))
+    .returning()
+
+  if (!deleted) {
+    return NextResponse.json({ error: 'Marcador não encontrado.' }, { status: 404 })
+  }
+
+  return NextResponse.json({ success: true, id: deleted.id })
+}

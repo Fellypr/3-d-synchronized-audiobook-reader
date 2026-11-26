@@ -1,3 +1,5 @@
+import type { BookmarkItem } from './bookmark'
+
 export interface BookIndexItem {
   id: string
   title: string
@@ -18,4 +20,8 @@ export interface BookIndexSidebarProps {
   currentSpreadPage?: number // 1-based current spread end page
   totalPages: number
   onSelectPage: (pageNumber: number) => void
+  bookmarks?: BookmarkItem[]
+  onSelectBookmark?: (bookmark: BookmarkItem) => void
+  onDeleteBookmark?: (id: string) => Promise<void> | void
+  isDeletingBookmarkId?: string | null
 }
