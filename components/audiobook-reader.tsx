@@ -12,6 +12,7 @@ import {
   FileJson,
   FileText,
   Home,
+  List,
   Minus,
   Plus,
   Settings2,
@@ -19,6 +20,9 @@ import {
 } from 'lucide-react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { mapPdfDocumentToWords, type PageWordRange, type WordPosition } from '@/lib/books/pdf-sync'
+import { extractBookOutline } from '@/lib/books/outline'
+import type { BookIndexItem } from '@/types/book-index'
+import { BookIndexSidebar } from '@/components/book-index/book-index-sidebar'
 import { PdfPageSheet } from '@/components/reader-dashboard/pdf-page-sheet'
 import { TraditionalPlayer } from '@/components/audio-player/traditional-player'
 import { CompactPlayer } from '@/components/audio-player/compact-player'
@@ -68,6 +72,8 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
   const [theme, setThemeState] = useState<'sepia' | 'light' | 'night'>('sepia')
   const [highlight, setHighlight] = useState('blue')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [indexOpen, setIndexOpen] = useState(false)
+  const [outlineItems, setOutlineItems] = useState<BookIndexItem[]>([])
   const [uploadOpen, setUploadOpen] = useState(false)
   const [bookmarked, setBookmarked] = useState(false)
   const [page, setPage] = useState(0)
@@ -143,6 +149,21 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
     words.slice(spreadStart + wordsPerPage, spreadStart + wordsPerPage * 2),
   ]
   const duration = audioDuration ?? Math.max(1, (words.at(-1)?.f ?? 1) + 0.5)
+
+  // Extract or generate Outline whenever PDF or totalPages changes
+  useEffect(() => {
+    let cancelled = false
+    async function loadOutline() {
+      const result = await extractBookOutline(pdfDoc, totalPages)
+      if (!cancelled) {
+        setOutlineItems(result.items)
+      }
+    }
+    void loadOutline()
+    return () => {
+      cancelled = true
+    }
+  }, [pdfDoc, totalPages])
 
   // Identify whether the currently active spoken word is on the right side page
   const isMobileRightPage = useMemo(() => {
@@ -496,6 +517,17 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
     [pdfDoc, pdfPageRanges, totalSpreads, viewMode, words, wordsPerPage]
   )
 
+  const handleSelectPageFromIndex = useCallback(
+    (pageNumber: number) => {
+      const targetSpread = Math.max(0, Math.min(totalSpreads - 1, Math.floor((pageNumber - 1) / 2)))
+      navigate(targetSpread)
+      if (typeof window !== 'undefined' && window.innerWidth < 768) {
+        setIndexOpen(false)
+      }
+    },
+    [navigate, totalSpreads]
+  )
+
   const audioControllerActions = useAudioPlayerController({
     audioRef,
     audioUrl,
@@ -733,8 +765,19 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
         )}
       </AnimatePresence>
 
+      {/* Sidebar do Índice do Livro */}
+      <BookIndexSidebar
+        isOpen={indexOpen}
+        onClose={() => setIndexOpen(false)}
+        items={outlineItems}
+        currentPage={page * 2 + 1}
+        currentSpreadPage={Math.min(page * 2 + 2, totalPages)}
+        totalPages={totalPages}
+        onSelectPage={handleSelectPageFromIndex}
+      />
+
       {/* Refined Header */}
-      <header className="sticky top-0 z-40 flex h-16 md:h-20 items-center justify-between border-b border-white/10 bg-[#0d1015]/85 px-4 backdrop-blur-xl md:px-8">
+      <header className="sticky top-0 z-30 flex h-16 md:h-20 items-center justify-between border-b border-white/10 bg-[#0d1015]/85 px-4 backdrop-blur-xl md:px-8">
         <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0 pr-2">
           {coverUrl ? (
             <img
@@ -767,6 +810,25 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
 
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
           <span className="hidden text-xs text-[#9aa6b6] lg:inline max-w-[120px] truncate">{userName}</span>
+          
+          {/* Botão de alternar Índice do Livro */}
+          <button
+            type="button"
+            onClick={() => setIndexOpen(!indexOpen)}
+            aria-expanded={indexOpen}
+            aria-controls="book-index-sidebar"
+            className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 sm:px-3 text-xs font-medium transition-all ${
+              indexOpen
+                ? 'border-amber-500/40 bg-amber-500/20 text-amber-300 shadow-xs'
+                : 'border-white/10 bg-white/5 text-[#d0d7e0] hover:bg-white/10'
+            }`}
+            title="Índice de capítulos e seções"
+            aria-label="Índice do Livro"
+          >
+            <List className="size-3.5" />
+            <span className="hidden xs:inline">Índice</span>
+          </button>
+
           {pdfDoc && (
             <button
               onClick={() => setViewMode(viewMode === 'sheet' ? 'text' : 'sheet')}
