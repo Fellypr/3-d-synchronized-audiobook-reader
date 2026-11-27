@@ -22,14 +22,22 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { mapPdfDocumentToWords, type PageWordRange, type WordPosition } from '@/lib/books/pdf-sync'
 import { extractBookOutline } from '@/lib/books/outline'
 import {
+  extractRangeAnchor,
   extractTextAnchor,
   findActiveChapterAndSection,
   resolveBookmarkWordIndex,
 } from '@/lib/books/bookmark-anchor'
 import type { BookIndexItem } from '@/types/book-index'
-import type { BookmarkItem } from '@/types/bookmark'
+import {
+  getCategoryConfig,
+  type BookmarkCategoryId,
+  type BookmarkItem,
+  type UpdateBookmarkPayload,
+} from '@/types/bookmark'
 import { BookIndexSidebar } from '@/components/book-index/book-index-sidebar'
-import { PdfPageSheet } from '@/components/reader-dashboard/pdf-page-sheet'
+import { HighlighterToolbar } from '@/components/bookmarks/highlighter-toolbar'
+import { BookmarkDetailModal } from '@/components/bookmarks/bookmark-detail-modal'
+import { PdfPageSheet, type PageHighlightRange } from '@/components/reader-dashboard/pdf-page-sheet'
 import { TraditionalPlayer } from '@/components/audio-player/traditional-player'
 import { CompactPlayer } from '@/components/audio-player/compact-player'
 import { useAudioPlayerController } from '@/hooks/use-audio-player-controller'
@@ -86,6 +94,9 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
   const [isSavingBookmark, setIsSavingBookmark] = useState(false)
   const [bookmarkFeedback, setBookmarkFeedback] = useState<string | null>(null)
   const [isDeletingBookmarkId, setIsDeletingBookmarkId] = useState<string | null>(null)
+  const [activePen, setActivePen] = useState<BookmarkCategoryId | null>(null)
+  const [dragRange, setDragRange] = useState<{ start: number; end: number } | null>(null)
+  const [selectedBookmarkForModal, setSelectedBookmarkForModal] = useState<BookmarkItem | null>(null)
   const [page, setPage] = useState(0)
   const [flip, setFlip] = useState(0)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
@@ -651,6 +662,86 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
     }
   }, [])
 
+  const handleUpdateBookmark = useCallback(async (payload: UpdateBookmarkPayload) => {
+    const res = await fetch('/api/bookmarks', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (res.ok) {
+      const updated = (await res.json()) as BookmarkItem
+      setBookmarks((prev) => prev.map((b) => (b.id === updated.id ? updated : b)))
+      setSelectedBookmarkForModal((prev) => (prev?.id === updated.id ? updated : prev))
+    }
+  }, [])
+
+  const handleCreateRangeHighlight = useCallback(
+    async (startIdx: number, endIdx: number, categoryId: BookmarkCategoryId) => {
+      const minIdx = Math.min(startIdx, endIdx)
+      const maxIdx = Math.max(startIdx, endIdx)
+      const cat = getCategoryConfig(categoryId)
+      const currentPage = page * 2 + 1
+      const { chapter, section } = findActiveChapterAndSection(outlineItems, currentPage)
+      const { selectedText, textPrefix, textSuffix } = extractRangeAnchor(words, minIdx, maxIdx)
+
+      if (!selectedText) return
+
+      const autoTitle =
+        selectedText.length > 42 ? `${selectedText.slice(0, 42).trim()}...` : selectedText
+
+      const res = await fetch('/api/bookmarks', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          bookId: bookId ?? null,
+          bookName: title,
+          chapter,
+          section,
+          pageNumber: currentPage,
+          wordIndex: minIdx,
+          endWordIndex: maxIdx,
+          title: autoTitle,
+          category: cat.id,
+          color: cat.color,
+          selectedText,
+          textPrefix,
+          textSuffix,
+          audioTimeSeconds: audioUrl ? time : null,
+        }),
+      })
+
+      if (res.ok) {
+        const created = (await res.json()) as BookmarkItem
+        setBookmarks((prev) => [created, ...prev])
+        setBookmarkFeedback(`${cat.label} salvo`)
+        setTimeout(() => setBookmarkFeedback(null), 2200)
+      }
+    },
+    [audioUrl, bookId, outlineItems, page, time, title, words]
+  )
+
+  useEffect(() => {
+    if (!dragRange || !activePen) return
+    const handlePointerUp = () => {
+      const { start, end } = dragRange
+      setDragRange(null)
+      void handleCreateRangeHighlight(start, end, activePen)
+    }
+    window.addEventListener('pointerup', handlePointerUp)
+    return () => window.removeEventListener('pointerup', handlePointerUp)
+  }, [activePen, dragRange, handleCreateRangeHighlight])
+
+  const highlightRanges = useMemo<PageHighlightRange[]>(() => {
+    return bookmarks.map((bm) => {
+      const start = bm.wordIndex
+      const end = bm.endWordIndex ?? bm.wordIndex
+      const color = bm.color || getCategoryConfig(bm.category).color
+      return { start, end, color }
+    })
+  }, [bookmarks])
+
+  const activePenColor = activePen ? getCategoryConfig(activePen).color : null
+
   const audioControllerActions = useAudioPlayerController({
     audioRef,
     audioUrl,
@@ -898,9 +989,18 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
         totalPages={totalPages}
         onSelectPage={handleSelectPageFromIndex}
         bookmarks={bookmarks}
-        onSelectBookmark={handleSelectBookmark}
+        onSelectBookmark={(bm) => setSelectedBookmarkForModal(bm)}
         onDeleteBookmark={handleDeleteBookmark}
         isDeletingBookmarkId={isDeletingBookmarkId}
+      />
+
+      {/* Modal Compacto Arrastável do Marcador */}
+      <BookmarkDetailModal
+        bookmark={selectedBookmarkForModal}
+        onClose={() => setSelectedBookmarkForModal(null)}
+        onGoToBookmark={handleSelectBookmark}
+        onUpdateBookmark={handleUpdateBookmark}
+        onDeleteBookmark={handleDeleteBookmark}
       />
 
       {/* Refined Header */}
@@ -1188,8 +1288,8 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
 
       {/* Main Reading Canvas */}
       <div className="relative z-10 mx-auto flex max-w-[1300px] flex-col px-3.5 pb-36 pt-4 sm:px-6 sm:pt-6 md:px-10 md:pt-8">
-        {/* Subheader info & Bookmark */}
-        <div className="mb-3.5 sm:mb-5 flex items-center justify-between">
+        {/* Subheader info & Highlighter Pens & Bookmark */}
+        <div className="mb-3.5 sm:mb-5 flex flex-wrap items-center justify-between gap-2.5">
           <div>
             <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.2em] text-amber-400/80">
               Capítulo 01
@@ -1198,7 +1298,10 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
               {Math.round((active / Math.max(1, words.length - 1)) * 100)}% concluído · {words.length.toLocaleString('pt-BR')} palavras
             </p>
           </div>
-          <div className="flex items-center gap-2.5">
+
+          <div className="flex flex-wrap items-center gap-2">
+            <HighlighterToolbar activePen={activePen} onSelectPen={setActivePen} />
+
             {bookmarkFeedback && (
               <span className="text-xs font-medium text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 rounded-full animate-in fade-in">
                 {bookmarkFeedback}
@@ -1263,6 +1366,13 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
                         side="left"
                         isMobileActive={!isMobileRightPage}
                         zoom={pdfZoom}
+                        highlights={highlightRanges}
+                        dragRange={dragRange}
+                        activePenColor={activePenColor}
+                        onWordPointerDown={(idx) => setDragRange({ start: idx, end: idx })}
+                        onWordPointerEnter={(idx) =>
+                          setDragRange((prev) => (prev ? { ...prev, end: idx } : null))
+                        }
                       />
                       <PdfPageSheet
                         pdfDoc={pdfDoc}
@@ -1275,6 +1385,13 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
                         side="right"
                         isMobileActive={isMobileRightPage}
                         zoom={pdfZoom}
+                        highlights={highlightRanges}
+                        dragRange={dragRange}
+                        activePenColor={activePenColor}
+                        onWordPointerDown={(idx) => setDragRange({ start: idx, end: idx })}
+                        onWordPointerEnter={(idx) =>
+                          setDragRange((prev) => (prev ? { ...prev, end: idx } : null))
+                        }
                       />
                     </>
                   ) : (
@@ -1298,11 +1415,22 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
                             } top-0 w-6 from-black/15 to-transparent opacity-70`}
                           />
 
-                          <div className={`${textColors} select-text leading-relaxed`}>
+                          <div className={`${textColors} ${activePen ? 'select-none cursor-crosshair' : 'select-text'} leading-relaxed`}>
                             {side.map((word) => {
                               const index = words.indexOf(word)
                               const isActive = index === active
                               const dimmed = highlight === 'focus' && active !== index
+                              const isDraggingWord =
+                                dragRange !== null &&
+                                index >= Math.min(dragRange.start, dragRange.end) &&
+                                index <= Math.max(dragRange.start, dragRange.end)
+                              const savedHighlight = highlightRanges.find(
+                                (h) => index >= h.start && index <= h.end
+                              )
+                              const markerColor = isDraggingWord
+                                ? activePenColor
+                                : savedHighlight?.color ?? null
+
                               return (
                                 <span
                                   key={index}
@@ -1315,8 +1443,29 @@ export function AudiobookReader({ userName, bookId }: { userName?: string; bookI
                                   }
                                 >
                                   <button
-                                    onClick={() => seek(index)}
+                                    type="button"
+                                    onPointerDown={(e) => {
+                                      if (activePenColor) {
+                                        e.preventDefault()
+                                        setDragRange({ start: index, end: index })
+                                      }
+                                    }}
+                                    onPointerEnter={() => {
+                                      if (activePenColor) {
+                                        setDragRange((prev) => (prev ? { ...prev, end: index } : null))
+                                      }
+                                    }}
+                                    onClick={() => {
+                                      if (!activePenColor) seek(index)
+                                    }}
+                                    style={
+                                      markerColor && !isActive
+                                        ? { backgroundColor: `${markerColor}4D` }
+                                        : undefined
+                                    }
                                     className={`mr-[0.22em] inline rounded-[3px] text-left transition-all duration-150 ${
+                                      activePenColor ? 'cursor-crosshair' : ''
+                                    } ${
                                       dimmed ? 'opacity-35' : ''
                                     } ${
                                       isActive

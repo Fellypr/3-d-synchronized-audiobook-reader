@@ -4,6 +4,12 @@ import { useEffect, useRef, useState } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import type { WordPosition } from '@/lib/books/pdf-sync'
 
+export type PageHighlightRange = {
+  start: number
+  end: number
+  color: string
+}
+
 type PdfPageSheetProps = {
   pdfDoc: PDFDocumentProxy
   pageNumber: number
@@ -15,6 +21,11 @@ type PdfPageSheetProps = {
   side: 'left' | 'right'
   isMobileActive?: boolean
   zoom?: number
+  highlights?: PageHighlightRange[]
+  dragRange?: { start: number; end: number } | null
+  activePenColor?: string | null
+  onWordPointerDown?: (wordIndex: number) => void
+  onWordPointerEnter?: (wordIndex: number) => void
 }
 
 export function PdfPageSheet({
@@ -28,6 +39,11 @@ export function PdfPageSheet({
   side,
   isMobileActive,
   zoom = 1.12,
+  highlights = [],
+  dragRange = null,
+  activePenColor = null,
+  onWordPointerDown,
+  onWordPointerEnter,
 }: PdfPageSheetProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -217,6 +233,16 @@ export function PdfPageSheet({
         <div className="absolute inset-0 select-none overflow-hidden">
           {wordPositions.map((pos) => {
             const isActive = pos.wordIndex === activeWordIndex
+            const isDraggingWord =
+              dragRange !== null &&
+              pos.wordIndex >= Math.min(dragRange.start, dragRange.end) &&
+              pos.wordIndex <= Math.max(dragRange.start, dragRange.end)
+            const savedHighlight = highlights.find(
+              (h) => pos.wordIndex >= h.start && pos.wordIndex <= h.end
+            )
+            const markerColor = isDraggingWord
+              ? activePenColor
+              : savedHighlight?.color ?? null
 
             let highlightClasses = ''
             if (isActive) {
@@ -237,14 +263,34 @@ export function PdfPageSheet({
               <button
                 key={pos.wordIndex}
                 type="button"
-                onClick={() => onWordClick(pos.wordIndex)}
+                onPointerDown={(e) => {
+                  if (activePenColor && onWordPointerDown) {
+                    e.preventDefault()
+                    onWordPointerDown(pos.wordIndex)
+                  }
+                }}
+                onPointerEnter={() => {
+                  if (activePenColor && onWordPointerEnter) {
+                    onWordPointerEnter(pos.wordIndex)
+                  }
+                }}
+                onClick={() => {
+                  if (!activePenColor) {
+                    onWordClick(pos.wordIndex)
+                  }
+                }}
                 title={pos.text}
-                className={`absolute cursor-pointer transition-all duration-100 hover:bg-amber-500/15 ${highlightClasses}`}
+                className={`absolute transition-all duration-100 ${
+                  activePenColor ? 'cursor-crosshair' : 'cursor-pointer hover:bg-amber-500/15'
+                } ${highlightClasses}`}
                 style={{
                   left: `${pos.leftPercent}%`,
                   top: `${pos.topPercent}%`,
                   width: `${pos.widthPercent}%`,
                   height: `${pos.heightPercent}%`,
+                  ...(markerColor && !isActive
+                    ? { backgroundColor: `${markerColor}4D`, borderRadius: '3px' }
+                    : {}),
                 }}
                 aria-label={`Pular áudio para: ${pos.text}`}
               />

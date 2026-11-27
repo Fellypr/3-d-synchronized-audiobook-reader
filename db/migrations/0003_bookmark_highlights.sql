@@ -1,0 +1,6 @@
+ALTER TABLE "bookmarks"
+ADD COLUMN IF NOT EXISTS "endWordIndex" integer,
+ADD COLUMN IF NOT EXISTS "title" text,
+ADD COLUMN IF NOT EXISTS "category" text NOT NULL DEFAULT 'ponto-chave',
+ADD COLUMN IF NOT EXISTS "color" text NOT NULL DEFAULT '#E09F4C',
+ADD COLUMN IF NOT EXISTS "note" text;

@@ -80,6 +80,54 @@ export function extractTextAnchor(words: WordItem[], wordIndex: number): TextAnc
 }
 
 /**
+ * Extrai selectedText, textPrefix e textSuffix para um intervalo de palavras [startIndex..endIndex]
+ * selecionado por arraste do mouse.
+ */
+export function extractRangeAnchor(
+  words: WordItem[],
+  startIndex: number,
+  endIndex: number
+): TextAnchor {
+  if (!words || words.length === 0) {
+    return { selectedText: '', textPrefix: '', textSuffix: '' }
+  }
+
+  const minIdx = Math.max(0, Math.min(words.length - 1, Math.min(startIndex, endIndex)))
+  const maxIdx = Math.max(minIdx, Math.min(words.length - 1, Math.max(startIndex, endIndex)))
+
+  const selectedWordsList: string[] = []
+  for (let i = minIdx; i <= maxIdx; i++) {
+    const text = cleanWordText(words[i])
+    if (text) selectedWordsList.push(text)
+  }
+  const selectedText = selectedWordsList.join(' ').trim() || cleanWordText(words[minIdx]) || 'Trecho destacado'
+
+  const prefixWords: string[] = []
+  let prefixChars = 0
+  for (let i = minIdx - 1; i >= 0 && prefixChars < 40; i--) {
+    const text = cleanWordText(words[i])
+    if (text) {
+      prefixWords.unshift(text)
+      prefixChars += text.length + 1
+    }
+  }
+  const textPrefix = prefixWords.join(' ').trim().slice(-50).trim()
+
+  const suffixWords: string[] = []
+  let suffixChars = 0
+  for (let i = maxIdx + 1; i < words.length && suffixChars < 40; i++) {
+    const text = cleanWordText(words[i])
+    if (text) {
+      suffixWords.push(text)
+      suffixChars += text.length + 1
+    }
+  }
+  const textSuffix = suffixWords.join(' ').trim().slice(0, 50).trim()
+
+  return { selectedText, textPrefix, textSuffix }
+}
+
+/**
  * Localiza o wordIndex exato comparando selectedText e contexto (prefix/suffix),
  * com fallback para bookmark.wordIndex se não encontrar correspondência ou se words estiver vazio.
  */

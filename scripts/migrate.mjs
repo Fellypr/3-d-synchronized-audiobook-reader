@@ -88,6 +88,17 @@ async function migrate() {
     `)
     console.log('✓ Índices da tabela "bookmarks" criados/verificados')
 
+    // 6. Adicionar colunas de marca-texto e anotações em bookmarks
+    await pool.query(`
+      ALTER TABLE "bookmarks"
+      ADD COLUMN IF NOT EXISTS "endWordIndex" integer,
+      ADD COLUMN IF NOT EXISTS "title" text,
+      ADD COLUMN IF NOT EXISTS "category" text NOT NULL DEFAULT 'ponto-chave',
+      ADD COLUMN IF NOT EXISTS "color" text NOT NULL DEFAULT '#E09F4C',
+      ADD COLUMN IF NOT EXISTS "note" text;
+    `)
+    console.log('✓ Colunas de destaque colorido e notas verificadas em "bookmarks"')
+
     console.log('Migrações concluídas com sucesso!')
   } catch (err) {
     console.error('Erro ao executar migração:', err)

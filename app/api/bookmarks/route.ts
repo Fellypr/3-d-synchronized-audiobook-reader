@@ -52,10 +52,15 @@ export async function POST(request: Request) {
     section?: string | null
     pageNumber?: number | null
     wordIndex?: number
+    endWordIndex?: number | null
+    title?: string | null
+    category?: string | null
+    color?: string | null
     selectedText?: string
     textPrefix?: string | null
     textSuffix?: string | null
     audioTimeSeconds?: number | null
+    note?: string | null
   }
 
   try {
@@ -88,6 +93,13 @@ export async function POST(request: Request) {
     ? body.audioTimeSeconds
     : (body.audioTimeSeconds != null ? Number.parseFloat(String(body.audioTimeSeconds)) : null)
 
+  const endWordIndexRaw = typeof body.endWordIndex === 'number'
+    ? body.endWordIndex
+    : (body.endWordIndex != null ? Number.parseInt(String(body.endWordIndex), 10) : wordIndex)
+  const endWordIndex = Number.isInteger(endWordIndexRaw) && endWordIndexRaw >= wordIndex
+    ? endWordIndexRaw
+    : wordIndex
+
   const newBookmark = {
     id: randomUUID(),
     userId: user.id,
@@ -97,10 +109,15 @@ export async function POST(request: Request) {
     section: body.section?.trim() || null,
     pageNumber: Number.isInteger(pageNumber) ? pageNumber : null,
     wordIndex,
+    endWordIndex,
+    title: body.title?.trim() || null,
+    category: body.category?.trim() || 'ponto-chave',
+    color: body.color?.trim() || '#E09F4C',
     selectedText,
     textPrefix: body.textPrefix ?? null,
     textSuffix: body.textSuffix ?? null,
     audioTimeSeconds: Number.isFinite(audioTimeSeconds) ? audioTimeSeconds : null,
+    note: body.note?.trim() || null,
     createdAt: new Date(),
     updatedAt: new Date(),
   }
@@ -133,4 +150,55 @@ export async function DELETE(request: Request) {
   }
 
   return NextResponse.json({ success: true, id: deleted.id })
+}
+
+export async function PATCH(request: Request) {
+  const user = await getUser()
+  if (!user) {
+    return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
+  }
+
+  let body: {
+    id?: string
+    title?: string | null
+    note?: string | null
+    category?: string | null
+    color?: string | null
+  }
+
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Corpo da solicitação inválido.' }, { status: 400 })
+  }
+
+  const id = body.id?.trim()
+  if (!id) {
+    return NextResponse.json({ error: 'O ID do marcador é obrigatório.' }, { status: 400 })
+  }
+
+  const updates: {
+    title?: string | null
+    note?: string | null
+    category?: string
+    color?: string
+    updatedAt: Date
+  } = { updatedAt: new Date() }
+
+  if (body.title !== undefined) updates.title = body.title?.trim() || null
+  if (body.note !== undefined) updates.note = body.note?.trim() || null
+  if (body.category) updates.category = body.category.trim()
+  if (body.color) updates.color = body.color.trim()
+
+  const [updated] = await db
+    .update(bookmarks)
+    .set(updates)
+    .where(and(eq(bookmarks.id, id), eq(bookmarks.userId, user.id)))
+    .returning()
+
+  if (!updated) {
+    return NextResponse.json({ error: 'Marcador não encontrado.' }, { status: 404 })
+  }
+
+  return NextResponse.json(updated)
 }

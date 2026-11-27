@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import type { BookIndexItem, BookIndexSidebarProps } from '@/types/book-index'
+import { getCategoryConfig } from '@/types/bookmark'
 import type { BookmarkItem } from '@/types/bookmark'
 
 function isItemActive(
@@ -359,6 +360,8 @@ export function BookIndexSidebar({
                     const audioTimeStr = formatAudioTime(bm.audioTimeSeconds)
                     const dateStr = formatBookmarkDate(bm.createdAt)
                     const isDeleting = isDeletingBookmarkId === bm.id
+                    const cat = getCategoryConfig(bm.category)
+                    const markerColor = bm.color || cat.color
 
                     return (
                       <div
@@ -370,19 +373,24 @@ export function BookIndexSidebar({
                         }}
                         className="group relative flex flex-col gap-1.5 rounded-[10px] border border-[#36342d]/80 bg-[#171b22] p-3 text-xs cursor-pointer hover:border-[#e2ab4b]/50 hover:bg-[#1d222b] transition-all"
                       >
-                        {/* Top: Chapter/Section & Delete Button */}
+                        {/* Top: Category Dot + Title/Chapter & Delete Button */}
                         <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            {bm.chapter ? (
-                              <p className="text-[10px] font-semibold uppercase tracking-wider text-[#e2ab4b] truncate">
-                                {bm.chapter}
-                                {bm.section ? ` · ${bm.section}` : ''}
-                              </p>
-                            ) : (
-                              <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a5a6aa]">
-                                Marcador
-                              </p>
-                            )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              <span
+                                className="size-2 rounded-full shrink-0"
+                                style={{ backgroundColor: markerColor }}
+                              />
+                              <span
+                                className="text-[10px] font-semibold uppercase tracking-wider"
+                                style={{ color: markerColor }}
+                              >
+                                {cat.label}
+                              </span>
+                            </div>
+                            <p className="text-[11px] font-semibold text-[#f2eee6] truncate">
+                              {bm.title || bm.chapter || 'Marcador'}
+                            </p>
                           </div>
                           {onDeleteBookmark && (
                             <button
@@ -406,7 +414,7 @@ export function BookIndexSidebar({
                         </div>
 
                         {/* Selected Text / Quote */}
-                        <div className="border-l-2 border-[#f29b08] pl-2.5 py-0.5">
+                        <div className="border-l-2 pl-2.5 py-0.5" style={{ borderColor: markerColor }}>
                           <p className="text-[#f2eee6] font-serif text-[12px] italic leading-snug line-clamp-2">
                             &ldquo;{bm.selectedText}&rdquo;
                           </p>
