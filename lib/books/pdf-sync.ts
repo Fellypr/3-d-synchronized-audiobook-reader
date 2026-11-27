@@ -45,6 +45,40 @@ function normalize(str: string): string {
 }
 
 /**
+ * Strict token matching that prevents short words ("a", "e", "o", "de")
+ * from falsely matching inside longer words via .includes().
+ */
+function isTokenMatch(tokenNorm: string, audioNorm: string): boolean {
+  if (!tokenNorm || !audioNorm) return false
+  if (tokenNorm === audioNorm) return true
+
+  // Only allow substring matching when both tokens are substantial (>= 5 chars)
+  // and the shorter token covers at least 70% of the longer one.
+  if (tokenNorm.length >= 5 && audioNorm.length >= 5) {
+    const minLen = Math.min(tokenNorm.length, audioNorm.length)
+    const maxLen = Math.max(tokenNorm.length, audioNorm.length)
+    if (minLen / maxLen >= 0.7) {
+      return tokenNorm.includes(audioNorm) || audioNorm.includes(tokenNorm)
+    }
+  }
+
+  return false
+}
+
+/**
+ * Sorts extracted PDF tokens in natural visual reading order (top-to-bottom, left-to-right),
+ * grouping tokens on the same visual line within a 1.2% vertical tolerance.
+ */
+function sortTokensInReadingOrder(tokens: PageTokenBox[]): PageTokenBox[] {
+  return [...tokens].sort((a, b) => {
+    if (Math.abs(a.topPercent - b.topPercent) <= 1.2) {
+      return a.leftPercent - b.leftPercent
+    }
+    return a.topPercent - b.topPercent
+  })
+}
+
+/**
  * Finds the starting audio wordIndex for a page by searching for anchor sequences
  * of consecutive tokens (4-gram, then 3-gram, then 2-gram) in the audio stream.
  */
@@ -58,7 +92,7 @@ function findPageAnchor(
 
   const minSearch = Math.max(0, startSearchIdx - 150)
   const maxSearch = Math.min(audioTokens.length, startSearchIdx + maxLookahead)
-  const sampleLimit = Math.min(35, pageTokens.length)
+  const sampleLimit = Math.min(80, pageTokens.length)
 
   // 1. Try 4-gram anchor
   for (let pOffset = 0; pOffset <= sampleLimit - 4; pOffset++) {
@@ -156,7 +190,7 @@ export async function mapPdfDocumentToWords(
     const viewport = page.getViewport({ scale: 1.0 })
     const textContent = await page.getTextContent()
 
-    const tokens: PageTokenBox[] = []
+    const rawTokens: PageTokenBox[] = []
 
     for (const rawItem of textContent.items) {
       if (!('str' in rawItem) || !rawItem.str || !rawItem.str.trim()) continue
@@ -171,22 +205,31 @@ export async function mapPdfDocumentToWords(
       const tx = item.transform[4]
       const ty = item.transform[5]
       const fontHeight = Math.hypot(item.transform[2], item.transform[3]) || item.height || 12
-      const [left, top] = viewport.convertToViewportPoint(tx, ty + fontHeight)
+      const [left, top] = viewport.convertToViewportPoint(tx, ty + fontHeight * 0.92)
 
+      const strLen = Math.max(1, item.str.length)
       const parts = item.str.split(/\s+/).filter(Boolean)
-      const partWidth = item.width / Math.max(1, parts.length)
+      let searchFrom = 0
 
       for (let wIdx = 0; wIdx < parts.length; wIdx++) {
         const text = parts[wIdx]
         const norm = normalize(text)
+        const charOffset = item.str.indexOf(text, searchFrom)
+        const safeOffset = charOffset >= 0 ? charOffset : searchFrom
+        searchFrom = safeOffset + text.length
+
         if (!norm) continue
 
-        const leftPercent = Math.max(0, Math.min(100, ((left + wIdx * partWidth) / viewport.width) * 100))
-        const topPercent = Math.max(0, Math.min(100, (top / viewport.height) * 100))
-        const widthPercent = Math.max(0.5, Math.min(100, (partWidth / viewport.width) * 100))
-        const heightPercent = Math.max(0.5, Math.min(100, (fontHeight / viewport.height) * 100))
+        // Proportional horizontal offset and width based on character spans
+        const partLeft = left + (safeOffset / strLen) * item.width
+        const partWidth = Math.max(4, (text.length / strLen) * item.width)
 
-        tokens.push({
+        const leftPercent = Math.max(0, Math.min(100, (partLeft / viewport.width) * 100))
+        const topPercent = Math.max(0, Math.min(100, (top / viewport.height) * 100))
+        const widthPercent = Math.max(0.6, Math.min(100, (partWidth / viewport.width) * 100))
+        const heightPercent = Math.max(0.8, Math.min(100, ((fontHeight * 1.15) / viewport.height) * 100))
+
+        rawTokens.push({
           text,
           norm,
           leftPercent,
@@ -199,7 +242,7 @@ export async function mapPdfDocumentToWords(
 
     pageData.push({
       pageNumber: pageNum,
-      tokens,
+      tokens: sortTokensInReadingOrder(rawTokens),
       anchorIndex: -1,
     })
   }
@@ -214,7 +257,7 @@ export async function mapPdfDocumentToWords(
     }
   }
 
-  // Step 3: Interpolate any missing page anchors
+  // Step 3: Interpolate missing page anchors without collapsing the previous page
   for (let i = 0; i < pageData.length; i++) {
     if (pageData[i].anchorIndex < 0) {
       let prevKnown = 0
@@ -259,19 +302,26 @@ export async function mapPdfDocumentToWords(
       if (!normAudioWord) continue
 
       let matchedBox: PageTokenBox | null = null
+      const searchStart = Math.max(0, tokenCursor - 2)
+      const searchEnd = Math.min(tokens.length, tokenCursor + 10)
 
-      // Search in a local window of page tokens
-      const searchEnd = Math.min(tokens.length, tokenCursor + 12)
-      for (let t = Math.max(0, tokenCursor - 2); t < searchEnd; t++) {
-        const token = tokens[t]
-        if (
-          token.norm === normAudioWord ||
-          token.norm.includes(normAudioWord) ||
-          normAudioWord.includes(token.norm)
-        ) {
-          matchedBox = token
+      // Pass 1: Prefer exact match inside the local window
+      for (let t = searchStart; t < searchEnd; t++) {
+        if (tokens[t].norm === normAudioWord) {
+          matchedBox = tokens[t]
           tokenCursor = t + 1
           break
+        }
+      }
+
+      // Pass 2: Safe partial match for longer words (>= 5 chars)
+      if (!matchedBox) {
+        for (let t = searchStart; t < searchEnd; t++) {
+          if (isTokenMatch(tokens[t].norm, normAudioWord)) {
+            matchedBox = tokens[t]
+            tokenCursor = t + 1
+            break
+          }
         }
       }
 
@@ -285,14 +335,14 @@ export async function mapPdfDocumentToWords(
           heightPercent: matchedBox.heightPercent,
         })
       } else if (positions.length > 0) {
-        // Fallback: position smoothly next to previous matched word on page
+        // Soft fallback: keep position near previous matched word without advancing tokenCursor
         const lastPos = positions[positions.length - 1]
         positions.push({
           wordIndex: wIdx,
           text: audioWord.p,
-          leftPercent: Math.min(95, lastPos.leftPercent + lastPos.widthPercent + 0.3),
+          leftPercent: Math.min(92, lastPos.leftPercent + lastPos.widthPercent + 0.25),
           topPercent: lastPos.topPercent,
-          widthPercent: 2.5,
+          widthPercent: Math.max(1.2, Math.min(6, normAudioWord.length * 0.55)),
           heightPercent: lastPos.heightPercent,
         })
       }

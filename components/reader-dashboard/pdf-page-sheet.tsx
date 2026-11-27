@@ -289,7 +289,11 @@ export function PdfPageSheet({
                   width: `${pos.widthPercent}%`,
                   height: `${pos.heightPercent}%`,
                   ...(markerColor && !isActive
-                    ? { backgroundColor: `${markerColor}4D`, borderRadius: '3px' }
+                    ? {
+                        backgroundColor: theme === 'night' ? `${markerColor}45` : `${markerColor}55`,
+                        borderRadius: '3px',
+                        mixBlendMode: theme === 'night' ? 'screen' : 'multiply',
+                      }
                     : {}),
                 }}
                 aria-label={`Pular áudio para: ${pos.text}`}
