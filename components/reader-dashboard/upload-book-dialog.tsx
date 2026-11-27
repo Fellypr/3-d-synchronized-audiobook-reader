@@ -21,6 +21,7 @@ import { useSession } from '@/lib/auth-client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AudiobookApiClient } from '@/lib/audiobook-api-client'
+import { extractDominantColorFromPdf } from '@/lib/books/extract-pdf-color'
 
 type UploadBookDialogProps = {
   open: boolean
@@ -117,6 +118,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
   // Campos compartilhados
   const [title, setTitle] = useState('')
   const [coverUrl, setCoverUrl] = useState('')
+  const [accentColor, setAccentColor] = useState<string | null>(null)
   const [isTitleCustomized, setIsTitleCustomized] = useState(false)
   const [busy, setBusy] = useState(false)
   const [uploadStatus, setUploadStatus] = useState('')
@@ -175,6 +177,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     setError('')
     setConflict(null)
     setPdfTotalPages(null)
+    setAccentColor(null)
 
     if (file && (!title.trim() || !isTitleCustomized)) {
       setTitle(cleanFileNameToTitle(file.name))
@@ -190,6 +193,8 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
         }
         const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
         setPdfTotalPages(pdfDoc.numPages)
+        const detectedColor = await extractDominantColorFromPdf(pdfDoc)
+        if (detectedColor) setAccentColor(detectedColor)
       } catch (err) {
         console.warn('Não foi possível inspecionar páginas do PDF:', err)
       } finally {
@@ -211,6 +216,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     setIsDetectingPages(false)
     setTitle('')
     setCoverUrl('')
+    setAccentColor(null)
     setHeaderFilter('')
     setPaginaInicial('')
     setPaginaFinal('')
@@ -353,6 +359,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
         body: JSON.stringify({
           name: bookName,
           coverUrl: coverUrl.trim() || undefined,
+          accentColor: accentColor || undefined,
           audioUrl: directAudioPathname,
           jsonUrl: directJsonPathname,
           pdfUrl: directPdfPathname || undefined,
@@ -416,6 +423,7 @@ export function UploadBookDialog({ open, onOpenChange, onAdded, userId }: Upload
     formData.append('name', bookName)
     if (pdfFile) formData.append('pdf', pdfFile)
     if (coverUrl.trim()) formData.append('coverUrl', coverUrl.trim())
+    if (accentColor) formData.append('accentColor', accentColor)
     formData.append('replaceExisting', String(replaceExisting))
     if (extraMeta?.status) formData.append('status', extraMeta.status)
     if (extraMeta?.jobId) formData.append('jobId', extraMeta.jobId)

@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto'
 import { headers } from 'next/headers'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { ensureBookAccentColumn } from '@/lib/db/ensure-book-columns'
 import { book, audiobookProgress } from '@/lib/db/schema'
 import { isValidWordMap, sanitizeWordMap } from '@/lib/books/word-map'
 import { saveAudiobookFile, deleteAudiobookFiles } from '@/lib/storage'
@@ -15,6 +16,7 @@ async function getSession() {
 export async function GET(request: Request) {
   const session = await getSession()
   if (!session?.user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
+  await ensureBookAccentColumn()
   const bookId = new URL(request.url).searchParams.get('id')
   const [latest] = await db.select().from(book).where(bookId
     ? and(eq(book.userId, session.user.id), eq(book.id, bookId))
@@ -103,6 +105,8 @@ export async function POST(request: Request) {
   const session = await getSession()
   if (!session?.user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
 
+  await ensureBookAccentColumn()
+
   // Support direct JSON submission when client uploads directly to Vercel Blob
   if (request.headers.get('content-type')?.includes('application/json')) {
     let body: {
@@ -111,6 +115,7 @@ export async function POST(request: Request) {
       jsonUrl?: string
       pdfUrl?: string
       coverUrl?: string
+      accentColor?: string
       replaceExisting?: boolean
       status?: string
       jobId?: string
@@ -129,6 +134,7 @@ export async function POST(request: Request) {
     const jsonUrl = String(body.jsonUrl || '').trim()
     const pdfUrl = body.pdfUrl?.trim() || null
     const coverUrl = body.coverUrl?.trim() || null
+    const accentColor = body.accentColor?.trim() || null
     const replaceExisting = Boolean(body.replaceExisting)
     const status = body.status || 'concluido'
     const jobId = body.jobId?.trim() || null
@@ -161,6 +167,7 @@ export async function POST(request: Request) {
             jsonUrl,
             pdfUrl: pdfUrl ?? existing.pdfUrl,
             coverUrl: coverUrl ?? existing.coverUrl,
+            accentColor: accentColor ?? existing.accentColor,
             durationSeconds: durationSeconds ?? existing.durationSeconds,
             status,
             jobId: jobId ?? existing.jobId,
@@ -178,6 +185,7 @@ export async function POST(request: Request) {
           jsonUrl,
           pdfUrl,
           coverUrl,
+          accentColor,
           durationSeconds,
           status,
           jobId,
@@ -223,6 +231,8 @@ export async function POST(request: Request) {
   const name = String(formData.get('name') || '').trim()
   const rawCoverUrl = formData.get('coverUrl')
   const coverUrl = typeof rawCoverUrl === 'string' && rawCoverUrl.trim() ? rawCoverUrl.trim() : null
+  const rawAccentColor = formData.get('accentColor')
+  const accentColor = typeof rawAccentColor === 'string' && rawAccentColor.trim() ? rawAccentColor.trim() : null
   const replaceExisting = formData.get('replaceExisting') === 'true'
 
   if (!(audio instanceof File) || !(json instanceof File) || !name) {
@@ -289,6 +299,7 @@ export async function POST(request: Request) {
           jsonUrl: jsonBlob.pathname,
           pdfUrl: pdfBlob ? pdfBlob.pathname : existing.pdfUrl,
           coverUrl: coverUrl ?? existing.coverUrl,
+          accentColor: accentColor ?? existing.accentColor,
           durationSeconds: durationSeconds ?? existing.durationSeconds,
           status,
           jobId: jobId ?? existing.jobId,
@@ -306,6 +317,7 @@ export async function POST(request: Request) {
         jsonUrl: jsonBlob.pathname,
         pdfUrl: pdfBlob ? pdfBlob.pathname : null,
         coverUrl,
+        accentColor,
         durationSeconds,
         status,
         jobId,

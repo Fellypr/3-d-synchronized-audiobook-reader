@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { BookOpen, Plus, ChevronLeft, ChevronRight, Play } from 'lucide-react'
+import { ArrowRight, BookOpen, Headphones, Plus, ChevronLeft, ChevronRight, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { buildDashboardBooks, formatDuration, formatBookCount, getBookReadingState, formatPosition, type ProgressRecord, type BookRecord } from '@/lib/books/progress'
 import { BookListItem } from '@/components/reader-dashboard/book-list-item'
@@ -12,8 +12,6 @@ import { LibraryToolbar, type LibraryFilter, type LibraryView } from '@/componen
 import { UploadBookDialog } from '@/components/reader-dashboard/upload-book-dialog'
 import { NotificationBell } from '@/components/reader-dashboard/notification-bell'
 
-/* ──────────────────── Hero Card ──────────────────── */
-/* ──────────────────── Hero Card ──────────────────── */
 function HeroCard({
   book,
   onOpen,
@@ -22,116 +20,174 @@ function HeroCard({
     id: string
     name: string
     coverUrl?: string | null
+    accentColor?: string | null
     currentTime: number
     durationSeconds?: number | null
     progressPercent: number | null
   }
   onOpen: (id: string) => void
 }) {
-  const state = getBookReadingState(book as any)
-  const statusLabel = state === 'completed' ? 'Concluído' : state === 'in-progress' ? 'Em andamento' : 'Ainda não iniciado'
   const initials = book.name.trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join('').toLocaleUpperCase('pt-BR')
 
   return (
     <section
       aria-label="Livro em destaque"
-      className="relative overflow-hidden rounded-2xl border border-library-border bg-library-surface/90 p-6 sm:p-8 lg:p-10 shadow-xl transition-all"
-      style={{ background: 'var(--library-card-gradient)' }}
+      className="relative overflow-hidden rounded-[20px] shadow-xl transition-colors duration-500"
+      style={{ backgroundColor: book.accentColor || '#121922' }}
     >
-      {/* Delicate background ambient glow */}
-      <div className="pointer-events-none absolute -right-20 -top-20 size-72 rounded-full bg-library-accent/5 blur-3xl" />
+      {/* Dark gradient & backdrop blur overlay for crisp text contrast */}
+      <div className="pointer-events-none absolute inset-0 backdrop-blur-[7.5px] bg-gradient-to-b from-[rgba(12,12,12,0.5)] via-[rgba(16,15,15,0.5)] to-[rgba(58,58,58,0.5)]" />
 
-      <div className="relative z-10 flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between sm:gap-10">
-        <div className="min-w-0 flex-1 space-y-4">
-          <div className="flex items-center gap-2.5">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-library-accent/30 bg-library-accent/10 px-3 py-1 text-xs font-medium text-library-accent">
-              <span className="size-1.5 rounded-full bg-library-accent" />
-              Última leitura
-            </span>
-            <span className="text-xs text-library-muted">
-              {statusLabel}
-            </span>
+      <div className="relative z-10 flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:justify-between sm:gap-10 sm:p-8 lg:px-11 lg:py-9">
+        <div className="min-w-0 flex-1 space-y-5">
+          <div className="flex items-center gap-2 text-xs font-medium text-[#f4f1eb]/90">
+            <span className="size-2 rounded-full bg-[#e09f4c]" />
+            <span>Continuando de onde parou</span>
           </div>
 
-          <h2 className="font-brand text-2xl font-medium tracking-tight text-library-ink sm:text-3xl lg:text-4xl [overflow-wrap:anywhere]">
+          <h2 className="font-brand text-xl font-semibold leading-tight tracking-tight text-[#f4f1eb] sm:text-[35px] [overflow-wrap:anywhere]">
             {book.name}
           </h2>
 
-          <div className="space-y-3 pt-1">
-            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs sm:text-sm text-library-muted">
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs sm:text-sm text-[#f4f1eb]/85">
               {book.currentTime > 0 && (
-                <span>
-                  Posição salva: <strong className="font-medium text-library-ink">{formatPosition(book.currentTime)}</strong>
+                <span className="inline-flex items-center gap-1.5">
+                  <BookOpen className="size-4 text-[#e09f4c]" />
+                  <span>{formatPosition(book.currentTime)}</span>
                 </span>
               )}
+              {book.currentTime > 0 && book.durationSeconds && (
+                <span className="text-[#f4f1eb]/35">|</span>
+              )}
               {book.durationSeconds && (
-                <span>
-                  Duração total: <strong className="font-medium text-library-ink">{formatDuration(book.durationSeconds)}</strong>
+                <span className="inline-flex items-center gap-1.5">
+                  <Headphones className="size-4 text-[#e09f4c]" />
+                  <span>{formatDuration(book.durationSeconds)}</span>
                 </span>
               )}
               {book.progressPercent !== null && (
-                <span className="font-medium text-library-accent">
+                <span className="font-semibold text-[#e09f4c]">
                   {book.progressPercent}% concluído
                 </span>
               )}
             </div>
 
             {book.progressPercent !== null && (
-              <div className="relative h-2 max-w-md overflow-hidden rounded-full bg-library-selected/80 border border-white/5">
+              <div className="relative h-[5px] max-w-md overflow-hidden rounded-full bg-[#252d35]">
                 <div
-                  className="h-full rounded-full transition-all duration-500 ease-out"
-                  style={{
-                    width: `${Math.max(3, book.progressPercent)}%`,
-                    backgroundColor: 'var(--library-accent)',
-                  }}
+                  className="h-full rounded-full bg-[#e09f4c] transition-all duration-500 ease-out"
+                  style={{ width: `${Math.max(3, book.progressPercent)}%` }}
                 />
               </div>
             )}
           </div>
 
-          <div className="pt-2">
+          <div className="pt-1">
             <button
               onClick={() => onOpen(book.id)}
-              className="inline-flex items-center gap-2.5 rounded-xl bg-library-accent px-5 py-3 text-sm font-semibold text-library-accent-foreground shadow-md transition-all duration-200 hover:bg-library-accent/90 hover:shadow-lg hover:shadow-library-accent/20 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-library-accent"
+              className="inline-flex items-center gap-2.5 rounded-[10px] bg-[#e09f4c] px-5 py-3 text-sm font-semibold text-[#060707] shadow-md transition-all duration-200 hover:bg-[#e09f4c]/90 hover:shadow-lg active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#e09f4c]"
             >
               <Play className="size-4 fill-current" />
-              <span>Continuar leitura</span>
+              <span>Continuar a leitura</span>
             </button>
           </div>
         </div>
 
-        {/* Book cover with realistic proportion & spine shadow */}
-        <div className="shrink-0 self-center sm:self-auto">
-          {book.coverUrl ? (
-            <div className="group relative">
-              <img
-                src={book.coverUrl}
-                alt={`Capa de ${book.name}`}
-                className="book-spine-effect h-52 w-36 rounded-md object-cover sm:h-60 sm:w-40 lg:h-64 lg:w-44"
+        {/* 3D Hardcover Book Mockup */}
+        <div className="shrink-0 self-center sm:self-auto py-2 pr-2">
+          <div className="relative h-42 w-36 sm:h-60 sm:w-44 lg:h-54 lg:w-38 [perspective:1100px]">
+            {/* Ground / Ambient Drop Shadow */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute -bottom-3 -left-3 right-2 h-8 rounded-full bg-black/55 blur-xl"
+            />
+            <div
+              className="relative h-full w-full transition-transform duration-300 ease-out hover:[transform:rotateY(12deg)_rotateX(3deg)_translateY(-3px)]"
+              style={{
+                transformStyle: 'preserve-3d',
+                transform: 'rotateY(18deg) rotateX(6deg)',
+              }}
+            >
+              {/* Back Cover */}
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 rounded-r-[4px] bg-[#b5bac2]"
+                style={{ transform: 'translateZ(-22px)' }}
               />
-              <div className="pointer-events-none absolute inset-0 rounded-md ring-1 ring-inset ring-white/10" />
-            </div>
-          ) : (
-            <div className="book-spine-effect flex h-52 w-36 flex-col justify-between rounded-md border border-library-border bg-library-selected p-4 text-center sm:h-60 sm:w-40 lg:h-64 lg:w-44">
-              <span className="text-[10px] uppercase tracking-widest text-library-muted">Auditeca</span>
-              <div className="flex flex-1 items-center justify-center">
-                <span className="font-brand text-2xl font-bold text-library-accent">
-                  {initials || <BookOpen className="size-8 text-library-accent" />}
-                </span>
+
+              {/* Top Page Edges */}
+              <div
+                aria-hidden="true"
+                className="absolute left-[2px] right-[3px] top-[3px] h-[22px] border-t border-black/15"
+                style={{
+                  transformOrigin: 'top center',
+                  transform: 'rotateX(-90deg)',
+                  background:
+                    'repeating-linear-gradient(to bottom, #e9ebef 0px, #e9ebef 2px, #d7dae0 2px, #d7dae0 3px)',
+                  boxShadow: 'inset 0 2px 6px rgba(0,0,0,0.18)',
+                }}
+              />
+
+              {/* Left Spine */}
+              <div
+                aria-hidden="true"
+                className="absolute bottom-0 left-0 top-0 w-[22px] rounded-l-[3px]"
+                style={{
+                  transformOrigin: 'left center',
+                  transform: 'rotateY(-90deg)',
+                  background:
+                    'linear-gradient(90deg, #9aa0a8 0%, #d2d6dc 38%, #eceef2 68%, #b3b9c2 100%)',
+                  boxShadow:
+                    'inset -2px 0 5px rgba(0,0,0,0.22), inset 1px 0 2px rgba(255,255,255,0.45)',
+                }}
+              />
+
+              {/* Front Cover */}
+              <div className="relative h-full w-full overflow-hidden rounded-r-[4px] rounded-l-[1px] bg-[#1a222d] shadow-[-6px_12px_24px_rgba(0,0,0,0.48)]">
+                {book.coverUrl ? (
+                  <img
+                    src={book.coverUrl}
+                    alt={`Capa de ${book.name}`}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full w-full flex-col justify-between border border-white/15 bg-[#1a222d] p-4 text-center">
+                    <span className="text-[10px] uppercase tracking-widest text-[#f4f1eb]/60">Auditeca</span>
+                    <div className="flex flex-1 items-center justify-center">
+                      <span className="font-brand text-2xl font-bold text-[#e09f4c]">
+                        {initials || <BookOpen className="size-8 text-[#e09f4c]" />}
+                      </span>
+                    </div>
+                    <span className="truncate text-xs text-[#f4f1eb]/75">{book.name}</span>
+                  </div>
+                )}
+
+                {/* Hardcover spine crease & glossy edge highlight */}
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0"
+                  style={{
+                    background:
+                      'linear-gradient(90deg, rgba(0,0,0,0.32) 0%, rgba(255,255,255,0.28) 2.5%, rgba(0,0,0,0.14) 5.5%, rgba(255,255,255,0.06) 8%, transparent 16%)',
+                    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.28), inset -1px 0 0 rgba(255,255,255,0.12)',
+                  }}
+                />
               </div>
-              <span className="truncate text-xs text-library-muted">{book.name}</span>
             </div>
-          )}
+          </div>
         </div>
       </div>
     </section>
   )
 }
 
-/* ──────────────────── Book Carousel ──────────────────── */
+/* ──────────────────── Book Carousel (Figma 56:500) ──────────────────── */
 function BookCarousel({
   books,
+  lastReadId,
   onOpen,
+  onAddBook,
 }: {
   books: Array<{
     id: string
@@ -142,7 +198,9 @@ function BookCarousel({
     completedParts?: number | null
     totalParts?: number | null
   }>
+  lastReadId?: string | null
   onOpen: (id: string) => void
+  onAddBook: () => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
@@ -170,7 +228,7 @@ function BookCarousel({
   function scroll(dir: 'left' | 'right') {
     const el = scrollRef.current
     if (!el) return
-    el.scrollBy({ left: dir === 'left' ? -340 : 340, behavior: 'smooth' })
+    el.scrollBy({ left: dir === 'left' ? -300 : 300, behavior: 'smooth' })
   }
 
   const initials = (name: string) =>
@@ -186,11 +244,11 @@ function BookCarousel({
 
   return (
     <div className="relative">
-      {/* Scroll controls */}
       {canScrollLeft && (
         <button
+          type="button"
           onClick={() => scroll('left')}
-          className="absolute -left-3 top-1/2 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-library-border bg-library-surface/95 text-library-ink shadow-lg backdrop-blur-md transition-all hover:bg-library-selected hover:text-library-accent focus-visible:outline-2 focus-visible:outline-library-accent"
+          className="absolute -left-3 top-1/2 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-[#252d35] bg-[#121a23]/95 text-[#f4f1eb] shadow-lg backdrop-blur-md transition-all hover:border-[#e09f4c] hover:text-[#e09f4c]"
           aria-label="Rolar para a esquerda"
         >
           <ChevronLeft className="size-4" />
@@ -198,8 +256,9 @@ function BookCarousel({
       )}
       {canScrollRight && (
         <button
+          type="button"
           onClick={() => scroll('right')}
-          className="absolute -right-3 top-1/2 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-library-border bg-library-surface/95 text-library-ink shadow-lg backdrop-blur-md transition-all hover:bg-library-selected hover:text-library-accent focus-visible:outline-2 focus-visible:outline-library-accent"
+          className="absolute -right-3 top-1/2 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-[#252d35] bg-[#121a23]/95 text-[#f4f1eb] shadow-lg backdrop-blur-md transition-all hover:border-[#e09f4c] hover:text-[#e09f4c]"
           aria-label="Rolar para a direita"
         >
           <ChevronRight className="size-4" />
@@ -208,103 +267,115 @@ function BookCarousel({
 
       <div
         ref={scrollRef}
-        className="scrollbar-hide flex gap-5 overflow-x-auto pb-6 pt-2 sm:gap-6"
+        className="scrollbar-hide flex gap-5 overflow-x-auto pb-3 pt-1"
         style={{ scrollSnapType: 'x mandatory' }}
       >
-        {books.map((book) => (
-          <button
-            key={book.id}
-            onClick={() => onOpen(book.id)}
-            className="group flex shrink-0 flex-col items-center gap-2.5 rounded-xl p-1 text-left transition-all duration-200 hover:-translate-y-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-library-accent"
-            style={{ scrollSnapAlign: 'start' }}
-            aria-label={`Abrir livro: ${book.name}`}
-          >
-            {/* ─── Mockup 3D do Livro (Figma 22:159) ─── */}
-            <div className="relative h-[215px] w-[159px] shrink-0 drop-shadow-md transition-transform duration-200 group-hover:scale-[1.02]">
-              {/* Moldura física 3D de fundo (lombada e páginas) */}
-              <img
-                src="/book-frame-3d.png"
-                alt=""
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 size-full select-none object-cover"
-              />
+        {books.map((book) => {
+          const isSelected = book.id === lastReadId
+          const percent = Math.max(0, Math.min(100, Math.round(book.progressPercent ?? 0)))
 
-              {/* Capa inclinada com perspectiva e sombreamento */}
-              <div className="absolute left-[26px] top-[6.8px] flex h-[206px] w-[132px] items-center justify-center">
-                <div className="flex-none rotate-[-2.29deg] skew-x-[-2.29deg]">
-                  <div className="relative h-[201px] w-[132px] overflow-hidden rounded-r-[2px] shadow-[0px_12px_24px_-8px_rgba(0,0,0,0.7)]">
-                    {book.coverUrl ? (
-                      <img
-                        src={book.coverUrl}
-                        alt={`Capa de ${book.name}`}
-                        className="size-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex size-full flex-col justify-between bg-gradient-to-br from-[#2a303c] via-[#1e232d] to-[#151921] p-3 text-center">
-                        <span className="text-[9px] font-semibold uppercase tracking-widest text-library-accent/70">
-                          Audiolivro
-                        </span>
-                        <div className="flex flex-1 items-center justify-center">
-                          <span className="font-brand text-xl font-bold text-library-accent">
-                            {initials(book.name) || <BookOpen className="size-6 text-library-accent" />}
-                          </span>
-                        </div>
-                        <span className="line-clamp-2 text-[10px] font-medium leading-tight text-white/70">
-                          {book.name}
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Sombreamento interno de lombada e curvatura da página */}
-                    <div
-                      aria-hidden="true"
-                      className="pointer-events-none absolute inset-0 shadow-[inset_4px_0px_8px_-2px_rgba(0,0,0,0.6),inset_-1px_0px_2px_0px_rgba(255,255,255,0.08)]"
-                    />
-
-                    {/* Overlay interativo com botão de Play no hover */}
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 group-hover:opacity-100">
-                      <div className="flex size-11 items-center justify-center rounded-full bg-library-accent text-library-accent-foreground shadow-xl transition-transform duration-200 group-hover:scale-105">
-                        <Play className="ml-0.5 size-5 fill-current" />
-                      </div>
+          return (
+            <button
+              key={book.id}
+              type="button"
+              onClick={() => onOpen(book.id)}
+              style={{ scrollSnapAlign: 'start' }}
+              aria-label={`Abrir livro: ${book.name}`}
+              className={`group flex h-[302px] w-[246.4px] shrink-0 flex-col justify-between rounded-[14px] border bg-[#121a23] p-[18px] text-left transition-all duration-200 hover:-translate-y-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#e09f4c] ${
+                isSelected
+                  ? 'border-[#e09f4c]'
+                  : 'border-[#252d35] hover:border-[#e09f4c]/70'
+              }`}
+            >
+              {/* Capa centralizada (112x168) */}
+              <div className="flex h-[168px] w-full items-center justify-center overflow-hidden">
+                {book.coverUrl ? (
+                  <img
+                    src={book.coverUrl}
+                    alt={`Capa de ${book.name}`}
+                    className="h-[168px] w-[112px] rounded-[3px] object-cover shadow-md transition-transform duration-200 group-hover:scale-[1.03]"
+                  />
+                ) : (
+                  <div className="flex h-[168px] w-[112px] flex-col justify-between rounded-[3px] border border-white/10 bg-gradient-to-br from-[#232b36] to-[#141a22] p-2.5 text-center shadow-md">
+                    <span className="text-[8px] font-semibold uppercase tracking-widest text-[#e09f4c]/80">
+                      Auditeca
+                    </span>
+                    <div className="flex flex-1 items-center justify-center">
+                      <span className="font-brand text-lg font-bold text-[#e09f4c]">
+                        {initials(book.name) || <BookOpen className="size-5 text-[#e09f4c]" />}
+                      </span>
                     </div>
+                    <span className="line-clamp-2 text-[9px] text-white/60">
+                      {book.name}
+                    </span>
                   </div>
-                </div>
+                )}
               </div>
-            </div>
 
-            {/* Título do livro abaixo do mockup */}
-            <div className="flex w-[145px] flex-col items-center gap-1">
-              <span
-                className="w-full truncate text-center text-xs font-medium text-library-ink/90 transition-colors group-hover:text-library-accent"
-                title={book.name}
-              >
-                {book.name}
-              </span>
+              {/* Título */}
+              <div className="w-full">
+                <h3
+                  className="line-clamp-2 h-[40px] text-[13px] font-medium leading-[20px] text-[#f4f1eb] transition-colors group-hover:text-[#e09f4c]"
+                  title={book.name}
+                >
+                  {book.name}
+                </h3>
 
-              {book.status === 'processando' && (
-                <div className="flex w-full flex-col items-center gap-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px]">
-                  <div className="flex items-center gap-1.5 font-semibold text-amber-500 leading-tight">
-                    <span className="size-1.5 rounded-full bg-amber-400 animate-pulse" />
-                    <span>Em 2º plano</span>
+                {/* Progresso e Seta */}
+                {book.status === 'processando' ? (
+                  <div className="mt-2.5 flex items-center justify-between text-[11px] text-amber-400">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <span className="size-1.5 rounded-full bg-amber-400 animate-pulse" />
+                      {typeof book.completedParts === 'number' && typeof book.totalParts === 'number' && book.totalParts > 0
+                        ? `Gerando (${book.completedParts}/${book.totalParts})`
+                        : 'Gerando áudio...'}
+                    </span>
+                    <ArrowRight className="size-[18px] text-[#f8f8f8]/70" />
                   </div>
-                  <span className="text-[9px] text-library-muted text-center leading-tight">
-                    {typeof book.completedParts === 'number' && typeof book.totalParts === 'number' && book.totalParts > 0
-                      ? `${book.completedParts}/${book.totalParts} partes (faltam ${Math.max(0, book.totalParts - book.completedParts)})`
-                      : 'Gerando áudio...'}
-                  </span>
-                  {typeof book.completedParts === 'number' && typeof book.totalParts === 'number' && book.totalParts > 0 && (
-                    <div className="h-1 w-full overflow-hidden rounded-full bg-neutral-700/40">
+                ) : (
+                  <div className="mt-3 flex h-[26px] items-center gap-2.5">
+                    <div className="h-[4px] flex-1 overflow-hidden rounded-[3px] bg-[#252d35]">
                       <div
-                        className="h-full rounded-full bg-amber-500 transition-all duration-300"
-                        style={{ width: `${Math.min(100, (book.completedParts / book.totalParts) * 100)}%` }}
+                        className="h-full rounded-[3px] bg-[#e09f4c] transition-all duration-300"
+                        style={{ width: `${percent}%` }}
                       />
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </button>
-        ))}
+                    <span
+                      className={`text-[12px] font-normal tabular-nums ${
+                        isSelected || percent > 0 ? 'text-[#e09f4c]' : 'text-[#f8f8f8]'
+                      }`}
+                    >
+                      {percent}%
+                    </span>
+                    <ArrowRight
+                      className={`size-[18px] shrink-0 transition-transform duration-200 group-hover:translate-x-0.5 ${
+                        isSelected ? 'text-[#e09f4c]' : 'text-[#f8f8f8] group-hover:text-[#e09f4c]'
+                      }`}
+                    />
+                  </div>
+                )}
+              </div>
+            </button>
+          )
+        })}
+
+        {/* Card Final: Adicionar novo livro */}
+        <button
+          type="button"
+          onClick={onAddBook}
+          style={{ scrollSnapAlign: 'start' }}
+          className="group flex h-[302px] w-[246.4px] shrink-0 flex-col items-center justify-center rounded-[14px] border border-dashed border-[#252d35] bg-[#10171f] p-6 text-center transition-all duration-200 hover:-translate-y-1 hover:border-[#e09f4c]/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#e09f4c]"
+        >
+          <div className="mb-4 flex size-[44px] items-center justify-center rounded-full bg-[#121a23] transition-transform duration-200 group-hover:scale-110">
+            <Plus className="size-6 text-[#f4f1eb] group-hover:text-[#e09f4c] transition-colors" />
+          </div>
+          <span className="text-[16px] font-semibold leading-[24px] text-[#f4f1eb]">
+            Adicionar novo livro
+          </span>
+          <span className="mt-2 max-w-[180px] text-[12px] leading-[18px] text-[#f8f8f8]/75">
+            Amplie sua jornada de conhecimento.
+          </span>
+        </button>
       </div>
     </div>
   )
@@ -328,6 +399,7 @@ export function ReaderDashboard({
   const [uploadOpen, setUploadOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [uploadMessage, setUploadMessage] = useState('')
+  const [selectedHeroBookId, setSelectedHeroBookId] = useState<string | null>(null)
 
   // Atualizações reativas imediatas de partes e status enquanto o poller sincroniza com a VPS
   const [activeJobUpdates, setActiveJobUpdates] = useState<
@@ -433,6 +505,14 @@ export function ReaderDashboard({
 
   const lastReadBook = dashboardBooks.find((item) => item.lastReadAt)
   const lastReadId = lastReadBook?.id
+  const heroBook = useMemo(() => {
+    if (selectedHeroBookId) {
+      const found = dashboardBooks.find((b) => b.id === selectedHeroBookId)
+      if (found) return found
+    }
+    return lastReadBook ?? dashboardBooks[0] ?? null
+  }, [dashboardBooks, lastReadBook, selectedHeroBookId])
+  const activeShelfId = heroBook?.id ?? lastReadBook?.id
   const hasBooks = books.length > 0
   const hasSearch = query.trim().length > 0
   const emptyStateKind = !hasBooks ? 'library' : hasSearch ? 'search' : 'filter'
@@ -440,6 +520,14 @@ export function ReaderDashboard({
 
   function openReader(id: string) {
     router.push(`/reader/${id}`)
+  }
+
+  function handleShelfSelect(id: string) {
+    if (activeShelfId === id) {
+      openReader(id)
+    } else {
+      setSelectedHeroBookId(id)
+    }
   }
 
   function showAddedBook() {
@@ -508,35 +596,42 @@ export function ReaderDashboard({
 
       <div className="mx-auto max-w-6xl px-4 pb-20 pt-6 sm:px-6 sm:pt-8 lg:px-8">
         {/* ─── Hero: Último livro ─── */}
-        {lastReadBook && (
+        {heroBook && (
           <div className="mb-10">
-            <HeroCard book={lastReadBook} onOpen={openReader} />
+            <HeroCard book={heroBook} onOpen={openReader} />
           </div>
         )}
 
-        {/* ─── Carrossel: Estante de Leituras ─── */}
+        {/* ─── Carrossel: Estante de Leituras (Figma 56:500) ─── */}
         {hasBooks && (
-          <section
-            aria-labelledby="shelf-title"
-            className="mb-10 rounded-2xl border border-library-border/80 bg-library-surface/50 p-5 sm:p-7 shadow-sm"
-          >
-            <div className="mb-5 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+          <section aria-labelledby="shelf-title" className="mb-12">
+            <div className="mb-5 flex items-center justify-between gap-4">
               <div>
-                <h2 id="shelf-title" className="font-brand text-xl font-semibold text-library-ink sm:text-2xl">
+                <h2
+                  id="shelf-title"
+                  className="font-brand text-[26px] sm:text-[28px] font-semibold leading-[36px] text-[#f4f1eb]"
+                >
                   Estante de Leituras
                 </h2>
-                <p className="text-xs sm:text-sm text-library-muted">
+                <p className="mt-0.5 text-[14px] leading-[22px] text-[#f8f8f8]/75">
                   Acesso rápido aos livros em sua coleção
                 </p>
               </div>
-              <span className="text-xs text-library-muted">
-                {visibleBooks.length} {visibleBooks.length === 1 ? 'livro visível' : 'livros visíveis'}
-              </span>
+              <a
+                href="#library-title"
+                className="inline-flex shrink-0 items-center gap-1.5 text-[13px] font-medium text-[#e09f4c] hover:underline"
+              >
+                <span>Ver todos</span>
+                <ArrowRight className="size-[18px]" />
+              </a>
             </div>
 
-            <div className="mt-4">
-              <BookCarousel books={visibleBooks} onOpen={openReader} />
-            </div>
+            <BookCarousel
+              books={visibleBooks}
+              lastReadId={activeShelfId}
+              onOpen={handleShelfSelect}
+              onAddBook={() => setUploadOpen(true)}
+            />
           </section>
         )}
 

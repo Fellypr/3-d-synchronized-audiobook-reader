@@ -55,6 +55,7 @@ export const book = pgTable('book', {
   jsonUrl: text('jsonUrl').notNull(),
   pdfUrl: text('pdfUrl'),
   coverUrl: text('coverUrl'),
+  accentColor: text('accentColor'),
   durationSeconds: real('durationSeconds'),
   status: text('status').notNull().default('concluido'),
   jobId: text('jobId'),

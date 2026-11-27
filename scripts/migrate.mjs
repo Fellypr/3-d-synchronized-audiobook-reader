@@ -99,6 +99,13 @@ async function migrate() {
     `)
     console.log('✓ Colunas de destaque colorido e notas verificadas em "bookmarks"')
 
+    // 7. Adicionar accentColor na tabela book
+    await pool.query(`
+      ALTER TABLE "book"
+      ADD COLUMN IF NOT EXISTS "accentColor" text;
+    `)
+    console.log('✓ Coluna "accentColor" adicionada/verificada em "book"')
+
     console.log('Migrações concluídas com sucesso!')
   } catch (err) {
     console.error('Erro ao executar migração:', err)
